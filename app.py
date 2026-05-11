@@ -14,8 +14,8 @@ st.set_page_config(
 # ---------------- THEME ----------------
 
 PRIMARY_COLOR = "#2563EB"
-BG_COLOR = "#010F32"
-CARD_COLOR = "#FFFFFF"
+BG_COLOR = "#061C49"
+CARD_COLOR = "#EFEFF2"
 TEXT_COLOR = "#0F172A"
 
 # ---------------- FILES ----------------

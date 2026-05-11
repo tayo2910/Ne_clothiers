@@ -185,7 +185,7 @@ st.markdown(f"""
     background-color: {BG_COLOR};
 }}
 .block-container {{
-    padding-top: 2rem;
+    padding-top: 6rem;
 }}
 h1, h2, h3, h4 {{
     color: white;
@@ -194,8 +194,8 @@ h1, h2, h3, h4 {{
     font-size: 42px;
     font-weight: 850;
     color: white;
-    margin-top: 10px;
-    margin-bottom: 4px;
+    margin-top: 20px;
+    margin-bottom: 
     letter-spacing: 3px;
     text-align: center;
     white-space: nowrap;

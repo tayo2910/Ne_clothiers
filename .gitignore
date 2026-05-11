@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+customer_images/
+receipts/
+NE_Clothiers_measurements.csv
+NE_Clothiers_measurements.xlsx

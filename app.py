@@ -44,29 +44,26 @@ FIELDS = [
     "Payment Status", "Amount Paid",
     "Receipt File", "Customer Image", "Customer Notes",
     "Delivery Status",
-    # Upper body
     "Chest", "Stomach", "Shoulder", "Sleeve Length",
     "Neck", "Round Sleeve", "Top Length",
-    # Lower body
     "Trouser Length", "Trouser-waist", "Hips",
     "Laps", "Knee", "Ankle"
 ]
 
-# Measurements shown per outfit type
 OUTFIT_FIELDS = {
-    "Agbada":   ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
-                 "Round Sleeve", "Top Length", "Hips"],
-    "Senator":  ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
-                 "Round Sleeve", "Top Length",
-                 "Trouser Length", "Trouser-waist", "Hips", "Laps", "Knee", "Ankle"],
-    "Suit":     ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
-                 "Top Length",
-                 "Trouser Length", "Trouser-waist", "Laps", "Knee", "Ankle"],
-    "Native":   ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
-                 "Round Sleeve", "Top Length",
-                 "Trouser Length", "Trouser-waist", "Hips", "Laps", "Knee", "Ankle"],
-    "Kaftan":   ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
-                 "Round Sleeve", "Top Length", "Hips"],
+    "Agbada":  ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
+                "Round Sleeve", "Top Length", "Hips"],
+    "Senator": ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
+                "Round Sleeve", "Top Length",
+                "Trouser Length", "Trouser-waist", "Hips", "Laps", "Knee", "Ankle"],
+    "Suit":    ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
+                "Top Length",
+                "Trouser Length", "Trouser-waist", "Laps", "Knee", "Ankle"],
+    "Native":  ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
+                "Round Sleeve", "Top Length",
+                "Trouser Length", "Trouser-waist", "Hips", "Laps", "Knee", "Ankle"],
+    "Kaftan":  ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
+                "Round Sleeve", "Top Length", "Hips"],
 }
 
 UPPER_BODY = ["Chest", "Stomach", "Shoulder", "Sleeve Length",
@@ -83,7 +80,6 @@ def ensure_file():
 def load_data() -> pd.DataFrame:
     ensure_file()
     df = pd.read_csv(FILE_NAME)
-    # Ensure all expected columns exist (handles older CSV files)
     for col in FIELDS:
         if col not in df.columns:
             df[col] = ""
@@ -92,8 +88,7 @@ def load_data() -> pd.DataFrame:
 
 def save_data(data: dict):
     df = load_data()
-    new_df = pd.DataFrame([data])
-    df = pd.concat([df, new_df], ignore_index=True)
+    df = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
     df.to_csv(FILE_NAME, index=False)
     st.cache_data.clear()
 
@@ -115,13 +110,6 @@ def delete_record(index: int):
 
 def validate_phone(phone: str) -> bool:
     return bool(re.match(r'^[0-9+\-\s]{7,15}$', phone)) if phone else True
-
-
-def validate_measurement(value: str, field: str) -> bool:
-    if value and not value.replace('.', '', 1).isdigit():
-        st.warning(f"⚠️ {field} should be a number (e.g. 42 or 42.5)")
-        return False
-    return True
 
 
 def is_overdue(row) -> bool:
@@ -153,20 +141,25 @@ def generate_pdf_receipt(record: dict) -> bytes:
         pdf.set_font("Helvetica", "", 10)
         pdf.cell(0, 8, str(value), ln=True)
 
-    info_fields = [
-        ("Customer Name",    record.get("Name", "")),
-        ("Phone",            record.get("Phone", "")),
-        ("Outfit Type",      record.get("Outfit Type", "")),
-        ("Unit",             record.get("Unit", "")),
-        ("Date Created",     record.get("Date Created", "")),
-        ("Delivery Date",    record.get("Expected Delivery Date", "")),
-        ("Delivery Status",  record.get("Delivery Status", "")),
-        ("Payment Status",   record.get("Payment Status", "")),
-        ("Amount Paid",      f"₦{record.get('Amount Paid', 0):,.0f}"),
-        ("Notes",            record.get("Customer Notes", "")),
-    ]
-    for label, value in info_fields:
-        row(label, value)
+    for label, key in [
+        ("Customer Name",   "Name"),
+        ("Phone",           "Phone"),
+        ("Outfit Type",     "Outfit Type"),
+        ("Unit",            "Unit"),
+        ("Date Created",    "Date Created"),
+        ("Delivery Date",   "Expected Delivery Date"),
+        ("Delivery Status", "Delivery Status"),
+        ("Payment Status",  "Payment Status"),
+        ("Amount Paid",     "Amount Paid"),
+        ("Notes",           "Customer Notes"),
+    ]:
+        val = record.get(key, "")
+        if key == "Amount Paid":
+            try:
+                val = f"\u20a6{float(val):,.0f}"
+            except (ValueError, TypeError):
+                val = str(val)
+        row(label, val)
 
     pdf.ln(4)
     pdf.set_font("Helvetica", "B", 12)
@@ -200,10 +193,6 @@ def generate_pdf_receipt(record: dict) -> bytes:
 # ── SESSION STATE DEFAULTS ────────────────────────────────────
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-if "edit_index" not in st.session_state:
-    st.session_state.edit_index = None
-if "confirm_delete" not in st.session_state:
-    st.session_state.confirm_delete = None
 
 # ── CUSTOM CSS ───────────────────────────────────────────────
 st.markdown(f"""
@@ -239,13 +228,6 @@ h1, h2, h3, h4 {{
     border-radius: 16px;
     border: 1px solid #2563EB33;
 }}
-.metric-card {{
-    background-color: {CARD_COLOR};
-    border-radius: 12px;
-    padding: 18px 22px;
-    border-left: 4px solid {PRIMARY_COLOR};
-    margin-bottom: 10px;
-}}
 .stTextInput input,
 .stNumberInput input,
 .stDateInput input {{
@@ -265,7 +247,6 @@ h1, h2, h3, h4 {{
     font-weight: bold;
     height: 42px;
     border: none;
-    transition: background-color 0.2s;
 }}
 .stButton > button:hover {{
     background-color: #1D4ED8;
@@ -280,10 +261,6 @@ h1, h2, h3, h4 {{
 }}
 .stDownloadButton > button:hover {{
     background-color: #047857;
-}}
-.overdue-row {{
-    color: #FCA5A5 !important;
-    font-weight: bold;
 }}
 div[data-testid="stSidebarContent"] {{
     background-color: #040F2E;
@@ -314,13 +291,11 @@ with st.sidebar:
 # ════════════════════════════════════════════════════════════
 if page == "📊 Dashboard":
     st.subheader("📊 Dashboard")
-
     df = load_data()
 
     if df.empty:
         st.info("No records yet. Add your first customer measurement to see stats here.")
     else:
-        # ── KPI METRICS ──
         total      = len(df)
         fully_paid = len(df[df["Payment Status"] == "Fully Paid"])
         part_paid  = len(df[df["Payment Status"] == "Part Payment"])
@@ -333,9 +308,10 @@ if page == "📊 Dashboard":
                 (df["_delivery_dt"] >= today) &
                 (df["_delivery_dt"] <= today + pd.Timedelta(days=7))
             ]
+            delivery_col = df.get("Delivery Status", pd.Series([""] * len(df)))
             overdue = df[
                 (df["_delivery_dt"] < today) &
-                (df.get("Delivery Status", pd.Series([""] * len(df))).astype(str) != "Delivered")
+                (delivery_col.astype(str) != "Delivered")
             ]
         except Exception:
             due_this_week = pd.DataFrame()
@@ -343,46 +319,36 @@ if page == "📊 Dashboard":
 
         total_collected = pd.to_numeric(df["Amount Paid"], errors="coerce").sum()
 
-        col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("👥 Total Customers",   total)
-        col2.metric("✅ Fully Paid",         fully_paid)
-        col3.metric("🕐 Part Payment",       part_paid)
-        col4.metric("📅 Due This Week",      len(due_this_week))
-        col5.metric("⚠️ Overdue",            len(overdue))
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("👥 Total Customers", total)
+        c2.metric("✅ Fully Paid",       fully_paid)
+        c3.metric("🕐 Part Payment",     part_paid)
+        c4.metric("📅 Due This Week",    len(due_this_week))
+        c5.metric("⚠️ Overdue",          len(overdue))
 
         st.markdown(f"### 💰 Total Collected: ₦{total_collected:,.0f}")
         st.markdown("---")
 
-        # ── CHARTS ──
         chart_col1, chart_col2 = st.columns(2)
-
         with chart_col1:
             st.markdown("**Payment Status Breakdown**")
-            payment_counts = df["Payment Status"].value_counts()
-            st.bar_chart(payment_counts)
-
+            st.bar_chart(df["Payment Status"].value_counts())
         with chart_col2:
             st.markdown("**Outfit Type Breakdown**")
-            outfit_counts = df["Outfit Type"].value_counts()
-            st.bar_chart(outfit_counts)
+            st.bar_chart(df["Outfit Type"].value_counts())
 
         st.markdown("---")
-
-        # ── RECENT RECORDS ──
         st.markdown("**🕐 5 Most Recent Entries**")
-        recent = df.tail(5)[["Name", "Phone", "Outfit Type", "Payment Status",
-                              "Expected Delivery Date", "Delivery Status"]].iloc[::-1]
-        st.dataframe(recent, use_container_width=True)
+        recent_cols = ["Name", "Phone", "Outfit Type", "Payment Status",
+                       "Expected Delivery Date", "Delivery Status"]
+        st.dataframe(df.tail(5)[recent_cols].iloc[::-1], use_container_width=True)
 
-        # ── OVERDUE ORDERS ──
         if not overdue.empty:
             st.markdown("---")
             st.markdown("**🚨 Overdue Orders**")
-            st.dataframe(
-                overdue[["Name", "Phone", "Outfit Type",
-                          "Expected Delivery Date", "Payment Status"]],
-                use_container_width=True
-            )
+            overdue_cols = ["Name", "Phone", "Outfit Type",
+                            "Expected Delivery Date", "Payment Status"]
+            st.dataframe(overdue[overdue_cols], use_container_width=True)
 
 # ════════════════════════════════════════════════════════════
 # PAGE: NEW MEASUREMENT
@@ -390,61 +356,45 @@ if page == "📊 Dashboard":
 elif page == "📋 New Measurement":
     st.subheader("📋 Add New Customer Measurement")
 
-    with st.form("measurement_form", clear_on_submit=True):
+    # Outfit selector lives OUTSIDE the form so changing it
+    # immediately rerenders the measurement fields below.
+    outfit = st.selectbox(
+        "Outfit Type",
+        ["Agbada", "Senator", "Suit", "Native", "Kaftan"],
+        key="outfit_selector"
+    )
 
+    with st.form("measurement_form", clear_on_submit=True):
         col1, col2 = st.columns([1, 1])
 
-        # ── LEFT COLUMN ──────────────────────────────────────
         with col1:
             st.markdown("#### Customer Info")
-
             name  = st.text_input("Customer Name *")
             phone = st.text_input("Phone Number")
-
-            outfit = st.selectbox(
-                "Outfit Type",
-                ["Agbada", "Senator", "Suit", "Native", "Kaftan"]
-            )
-
+            # Show the selected outfit as read-only info inside the form
+            st.markdown(f"**Outfit:** {outfit}")
             unit = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
-
-            delivery_date = st.date_input("Expected Delivery Date")
-
-            delivery_status = st.selectbox(
-                "Delivery Status",
-                ["Pending", "In Progress", "Ready", "Delivered"]
-            )
-
-            payment_status = st.selectbox(
-                "Payment Status",
-                ["Not Paid", "Part Payment", "Fully Paid"]
-            )
-
+            delivery_date   = st.date_input("Expected Delivery Date")
+            delivery_status = st.selectbox("Delivery Status",
+                                           ["Pending", "In Progress", "Ready", "Delivered"])
+            payment_status  = st.selectbox("Payment Status",
+                                           ["Not Paid", "Part Payment", "Fully Paid"])
             amount_paid = st.number_input("Amount Paid (₦)", min_value=0.0, step=1000.0)
-
             st.markdown("---")
             st.markdown("**Payment Receipt**")
-            receipt = st.file_uploader(
-                "Upload receipt (PNG, JPG, PDF)",
-                type=["png", "jpg", "jpeg", "pdf"],
-                label_visibility="collapsed"
-            )
-
+            receipt = st.file_uploader("Upload receipt",
+                                       type=["png", "jpg", "jpeg", "pdf"],
+                                       label_visibility="collapsed")
             st.markdown("**Customer Photo** — upload a file or use the camera below")
-            customer_image = st.file_uploader(
-                "Upload photo",
-                type=["png", "jpg", "jpeg"],
-                label_visibility="collapsed"
-            )
+            customer_image = st.file_uploader("Upload photo",
+                                              type=["png", "jpg", "jpeg"],
+                                              label_visibility="collapsed")
             camera_photo = st.camera_input("📷 Take Photo")
-
             notes = st.text_area("Customer Notes", placeholder="Any special instructions...")
 
-        # ── RIGHT COLUMN ─────────────────────────────────────
         with col2:
             st.markdown("#### Body Measurements")
-            st.caption(f"Active fields shown for selected outfit: **{outfit}**")
-
+            st.caption(f"Fields shown for **{outfit}** — greyed fields are not required for this outfit.")
             active_fields = OUTFIT_FIELDS.get(outfit, UPPER_BODY + LOWER_BODY)
             meas_values   = {}
 
@@ -470,17 +420,15 @@ elif page == "📋 New Measurement":
 
         submitted = st.form_submit_button("💾 Save Measurement", use_container_width=True)
 
-        # ── SAVE LOGIC ───────────────────────────────────────
         if submitted:
             errors = []
-
             if not name.strip():
                 errors.append("Customer name is required.")
             if phone and not validate_phone(phone):
                 errors.append("Phone number format is invalid.")
             for field, val in meas_values.items():
                 if val and not val.replace('.', '', 1).isdigit():
-                    errors.append(f"{field} must be a number.")
+                    errors.append(f"{field} must be a number (e.g. 42 or 42.5).")
 
             if errors:
                 for e in errors:
@@ -489,13 +437,11 @@ elif page == "📋 New Measurement":
                 receipt_filename = ""
                 image_filename   = ""
 
-                # Save receipt
                 if receipt is not None:
                     receipt_filename = receipt.name
                     with open(os.path.join(RECEIPT_FOLDER, receipt_filename), "wb") as f:
                         f.write(receipt.getbuffer())
 
-                # Save image (camera takes priority)
                 image_file = camera_photo if camera_photo is not None else customer_image
                 if image_file is not None:
                     image_filename = image_file.name
@@ -519,7 +465,6 @@ elif page == "📋 New Measurement":
                 }
 
                 save_data(data)
-
                 st.success("✅ Measurement saved successfully!")
                 st.info(
                     f"**{name.strip()}** | {outfit} | "
@@ -538,8 +483,8 @@ elif page == "🗂️ Customer Records":
     if not st.session_state.logged_in:
         st.markdown("#### Admin Access")
         with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
+            username  = st.text_input("Username")
+            password  = st.text_input("Password", type="password")
             login_btn = st.form_submit_button("🔐 Login")
 
         if login_btn:
@@ -553,20 +498,22 @@ elif page == "🗂️ Customer Records":
     else:
         df = load_data()
 
-        # ── SEARCH & FILTER ──
-        filter_col1, filter_col2, filter_col3 = st.columns([2, 1, 1])
-        with filter_col1:
-            search = st.text_input("🔍 Search by name or phone", placeholder="Type to search...")
-        with filter_col2:
-            filter_outfit = st.selectbox("Filter by Outfit", ["All"] + list(df["Outfit Type"].dropna().unique()))
-        with filter_col3:
-            filter_payment = st.selectbox("Filter by Payment", ["All", "Not Paid", "Part Payment", "Fully Paid"])
+        fc1, fc2, fc3 = st.columns([2, 1, 1])
+        with fc1:
+            search = st.text_input("🔍 Search by name or phone",
+                                   placeholder="Type to search...")
+        with fc2:
+            outfit_opts = ["All"] + sorted(df["Outfit Type"].dropna().unique().tolist())
+            filter_outfit = st.selectbox("Filter by Outfit", outfit_opts)
+        with fc3:
+            filter_payment = st.selectbox("Filter by Payment",
+                                          ["All", "Not Paid", "Part Payment", "Fully Paid"])
 
         filtered_df = df.copy()
         if search:
             mask = (
-                filtered_df["Name"].astype(str).str.lower().str.contains(search.lower()) |
-                filtered_df["Phone"].astype(str).str.lower().str.contains(search.lower())
+                filtered_df["Name"].astype(str).str.lower().str.contains(search.lower(), na=False) |
+                filtered_df["Phone"].astype(str).str.lower().str.contains(search.lower(), na=False)
             )
             filtered_df = filtered_df[mask]
         if filter_outfit != "All":
@@ -575,9 +522,7 @@ elif page == "🗂️ Customer Records":
             filtered_df = filtered_df[filtered_df["Payment Status"] == filter_payment]
 
         st.caption(f"Showing {len(filtered_df)} of {len(df)} records")
-
-        # ── TABLE ──
-        st.dataframe(filtered_df, use_container_width=True, height=350)
+        st.dataframe(filtered_df, use_container_width=True, height=320)
 
         # ── EDIT / DELETE ──
         st.markdown("---")
@@ -585,7 +530,7 @@ elif page == "🗂️ Customer Records":
 
         if not filtered_df.empty:
             record_options = {
-                f"{row['Name']} — {row.get('Outfit Type','')} ({row.get('Date Created','')})": idx
+                f"{row['Name']} — {row.get('Outfit Type', '')} ({row.get('Date Created', '')})": idx
                 for idx, row in filtered_df.iterrows()
             }
             selected_label = st.selectbox("Select a record", list(record_options.keys()))
@@ -594,30 +539,37 @@ elif page == "🗂️ Customer Records":
 
             action_col1, action_col2 = st.columns(2)
 
-            # ── EDIT ──
             with action_col1:
                 with st.expander("✏️ Edit Selected Record"):
-                    with st.form("edit_form"):
-                        e_name     = st.text_input("Name",            value=str(selected_row.get("Name", "")))
-                        e_phone    = st.text_input("Phone",           value=str(selected_row.get("Phone", "")))
-                        e_outfit   = st.selectbox("Outfit Type",      ["Agbada", "Senator", "Suit", "Native", "Kaftan"],
-                                                  index=["Agbada", "Senator", "Suit", "Native", "Kaftan"].index(
-                                                      selected_row.get("Outfit Type", "Agbada"))
-                                                  if selected_row.get("Outfit Type") in ["Agbada", "Senator", "Suit", "Native", "Kaftan"] else 0)
-                        e_delivery = st.selectbox("Delivery Status",  ["Pending", "In Progress", "Ready", "Delivered"],
-                                                  index=["Pending", "In Progress", "Ready", "Delivered"].index(
-                                                      selected_row.get("Delivery Status", "Pending"))
-                                                  if selected_row.get("Delivery Status") in ["Pending", "In Progress", "Ready", "Delivered"] else 0)
-                        e_payment  = st.selectbox("Payment Status",   ["Not Paid", "Part Payment", "Fully Paid"],
-                                                  index=["Not Paid", "Part Payment", "Fully Paid"].index(
-                                                      selected_row.get("Payment Status", "Not Paid"))
-                                                  if selected_row.get("Payment Status") in ["Not Paid", "Part Payment", "Fully Paid"] else 0)
-                        e_amount   = st.number_input("Amount Paid (₦)",
-                                                     value=float(selected_row.get("Amount Paid", 0) or 0),
-                                                     min_value=0.0, step=1000.0)
-                        e_notes    = st.text_area("Notes", value=str(selected_row.get("Customer Notes", "")))
+                    outfit_list   = ["Agbada", "Senator", "Suit", "Native", "Kaftan"]
+                    delivery_list = ["Pending", "In Progress", "Ready", "Delivered"]
+                    payment_list  = ["Not Paid", "Part Payment", "Fully Paid"]
 
-                        save_edit = st.form_submit_button("💾 Save Changes")
+                    def safe_index(lst, val, default=0):
+                        return lst.index(val) if val in lst else default
+
+                    with st.form("edit_form"):
+                        e_name     = st.text_input("Name",
+                                                   value=str(selected_row.get("Name", "")))
+                        e_phone    = st.text_input("Phone",
+                                                   value=str(selected_row.get("Phone", "")))
+                        e_outfit   = st.selectbox("Outfit Type", outfit_list,
+                                                  index=safe_index(outfit_list,
+                                                                   selected_row.get("Outfit Type", "")))
+                        e_delivery = st.selectbox("Delivery Status", delivery_list,
+                                                  index=safe_index(delivery_list,
+                                                                   selected_row.get("Delivery Status", "")))
+                        e_payment  = st.selectbox("Payment Status", payment_list,
+                                                  index=safe_index(payment_list,
+                                                                   selected_row.get("Payment Status", "")))
+                        e_amount   = st.number_input(
+                            "Amount Paid (₦)",
+                            value=float(selected_row.get("Amount Paid") or 0),
+                            min_value=0.0, step=1000.0
+                        )
+                        e_notes    = st.text_area("Notes",
+                                                  value=str(selected_row.get("Customer Notes", "")))
+                        save_edit  = st.form_submit_button("💾 Save Changes")
 
                     if save_edit:
                         update_record(selected_idx, {
@@ -632,11 +584,13 @@ elif page == "🗂️ Customer Records":
                         st.success("Record updated.")
                         st.rerun()
 
-            # ── DELETE ──
             with action_col2:
                 with st.expander("🗑️ Delete Selected Record"):
-                    st.warning(f"You are about to delete **{selected_row.get('Name', '')}**. This cannot be undone.")
-                    confirm_name = st.text_input("Type the customer name to confirm deletion")
+                    st.warning(
+                        f"You are about to delete **{selected_row.get('Name', '')}**. "
+                        "This cannot be undone."
+                    )
+                    confirm_name = st.text_input("Type the customer name to confirm")
                     if st.button("🗑️ Confirm Delete", type="primary"):
                         if confirm_name.strip().lower() == str(selected_row.get("Name", "")).strip().lower():
                             delete_record(selected_idx)
@@ -653,24 +607,25 @@ elif page == "🗂️ Customer Records":
                 f"{row['Name']} — {row.get('Outfit Type', '')}": idx
                 for idx, row in filtered_df.iterrows()
             }
-            pdf_label = st.selectbox("Select customer for receipt", list(pdf_options.keys()), key="pdf_select")
+            pdf_label = st.selectbox("Select customer for receipt",
+                                     list(pdf_options.keys()), key="pdf_select")
             pdf_idx   = pdf_options[pdf_label]
             pdf_row   = df.loc[pdf_idx].to_dict()
-
             pdf_bytes = generate_pdf_receipt(pdf_row)
+            safe_name = pdf_row.get("Name", "customer").replace(" ", "_")
             st.download_button(
                 label="📄 Download PDF Receipt",
                 data=pdf_bytes,
-                file_name=f"receipt_{pdf_row.get('Name','customer').replace(' ','_')}.pdf",
+                file_name=f"receipt_{safe_name}.pdf",
                 mime="application/pdf"
             )
 
-        # ── DOWNLOADS ──
+        # ── EXPORTS ──
         st.markdown("---")
         st.markdown("#### 📥 Export Records")
-        dl_col1, dl_col2 = st.columns(2)
+        dl1, dl2 = st.columns(2)
 
-        with dl_col1:
+        with dl1:
             st.download_button(
                 label="⬇️ Download CSV",
                 data=filtered_df.to_csv(index=False),
@@ -678,7 +633,7 @@ elif page == "🗂️ Customer Records":
                 mime="text/csv"
             )
 
-        with dl_col2:
+        with dl2:
             excel_buffer = io.BytesIO()
             filtered_df.to_excel(excel_buffer, index=False, engine="openpyxl")
             st.download_button(

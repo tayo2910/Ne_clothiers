@@ -99,7 +99,7 @@ h1, h2, h3 {{
 
 .main-title {{
     font-size: 48px;
-    font-weight: bold;
+    font-weight: 850;
     color: white;
     margin-top: 20px;
     margin-bottom: 5px;

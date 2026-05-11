@@ -15,7 +15,7 @@ st.set_page_config(
 
 PRIMARY_COLOR = "#2563EB"
 BG_COLOR = "#061C49"
-CARD_COLOR = "#EFEFF2"
+CARD_COLOR = "#9494C5"
 TEXT_COLOR = "#0F172A"
 
 # ---------------- FILES ----------------
@@ -106,7 +106,7 @@ h1, h2, h3 {{
 
 .sub-title {{
     font-size: 18px;
-    color: #CBD5E1;
+    color: white;
     text-align: center;
     margin-bottom: 30px;
 }}
@@ -120,7 +120,7 @@ h1, h2, h3 {{
 .stTextInput input,
 .stNumberInput input,
 .stDateInput input {{
-    background-color: #F8FAFC;
+    background-color: grey
     color: {TEXT_COLOR};
     border-radius: 8px;
 }}
@@ -131,7 +131,7 @@ h1, h2, h3 {{
 
 .stButton button {{
     background-color: {PRIMARY_COLOR};
-    color: white;
+    color: {TEXT_COLOR};
     border-radius: 10px;
     font-weight: bold;
     height: 45px;
@@ -139,7 +139,7 @@ h1, h2, h3 {{
 }}
 
 .stButton button:hover {{
-    background-color: #1D4ED8;
+    background-color: white;
 }}
 
 </style>

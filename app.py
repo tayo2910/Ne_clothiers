@@ -191,13 +191,14 @@ h1, h2, h3, h4 {{
     color: white;
 }}
 .main-title {{
-    font-size: 64px;
+    font-size: 42px;
     font-weight: 850;
     color: white;
     margin-top: 10px;
     margin-bottom: 4px;
     letter-spacing: 3px;
     text-align: center;
+    white-space: nowrap;
 }}
 .sub-title {{
     font-size: 18px;

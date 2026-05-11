@@ -90,7 +90,7 @@ st.markdown(f"""
 }}
 
 .block-container {{
-    padding-top: 2rem;
+    padding-top: 5rem;
 }}
 
 h1, h2, h3 {{
@@ -98,17 +98,20 @@ h1, h2, h3 {{
 }}
 
 .main-title {{
-    font-size: 42px;
+    font-size: 48px;
     font-weight: bold;
     color: white;
+    margin-top: 20px;
+    margin-bottom: 5px;
+    letter-spacing: 2px;
     text-align: center;
 }}
 
 .sub-title {{
-    font-size: 18px;
+    font-size: 20px;
     color: white;
     text-align: center;
-    margin-bottom: 30px;
+    margin-bottom: 35px;
 }}
 
 [data-testid="stForm"] {{

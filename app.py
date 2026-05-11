@@ -1,9 +1,10 @@
+# IMPORTING LIBRARIES
 import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
 
-# ---------------- PAGE CONFIG ----------------
+# PAGE CONFIG 
 
 st.set_page_config(
     page_title="NE Clothiers",
@@ -11,24 +12,29 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------------- THEME ----------------
+# THEME
 
 PRIMARY_COLOR = "#2563EB"
 BG_COLOR = "#061C49"
 CARD_COLOR = "#9494C5"
 TEXT_COLOR = "#0F172A"
 
-# ---------------- FILES ----------------
+# FILES
 
 FILE_NAME = "NE_Clothiers_measurements.csv"
 
 IMAGE_FOLDER = "customer_images"
 RECEIPT_FOLDER = "receipts"
 
+# ADMIN
+
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "nedee123"
+
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 os.makedirs(RECEIPT_FOLDER, exist_ok=True)
 
-# ---------------- FIELDS ----------------
+# FIELDS
 
 FIELDS = [
     "Name",
@@ -58,7 +64,7 @@ FIELDS = [
     "Ankle"
 ]
 
-# ---------------- HELPERS ----------------
+# HELPERS
 
 def ensure_file():
     if not os.path.exists(FILE_NAME):
@@ -80,7 +86,7 @@ def save_data(data):
 
     df.to_csv(FILE_NAME, index=False)
 
-# ---------------- CUSTOM CSS ----------------
+# CUSTOM CSS
 
 st.markdown(f"""
 <style>
@@ -148,7 +154,7 @@ h1, h2, h3 {{
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- HEADER ----------------
+# HEADER 
 
 st.markdown(
     '<p class="main-title">NE CLOTHIERS</p>',
@@ -160,7 +166,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ---------------- SIDEBAR ----------------
+# SIDEBAR
 
 st.sidebar.title("Navigation")
 
@@ -169,9 +175,8 @@ page = st.sidebar.radio(
     ["New Measurement", "Customer Records"]
 )
 
-# =========================================================
 # NEW MEASUREMENT PAGE
-# =========================================================
+
 
 if page == "New Measurement":
 
@@ -181,7 +186,7 @@ if page == "New Measurement":
 
         col1, col2 = st.columns(2)
 
-        # ---------------- LEFT COLUMN ----------------
+        # LEFT COLUMN
 
         with col1:
 
@@ -231,7 +236,7 @@ if page == "New Measurement":
 
             notes = st.text_area("Customer Notes")
 
-        # ---------------- RIGHT COLUMN ----------------
+        # RIGHT COLUMN 
 
         with col2:
 
@@ -265,9 +270,7 @@ if page == "New Measurement":
             "Save Measurement"
         )
 
-        # =========================================================
         # SAVE LOGIC
-        # =========================================================
 
         if submitted:
 
@@ -280,7 +283,7 @@ if page == "New Measurement":
                 receipt_filename = ""
                 image_filename = ""
 
-                # ---------------- SAVE RECEIPT ----------------
+                # SAVE RECEIPT
 
                 if receipt is not None:
 
@@ -294,7 +297,7 @@ if page == "New Measurement":
                     with open(receipt_path, "wb") as f:
                         f.write(receipt.getbuffer())
 
-                # ---------------- SAVE IMAGE ----------------
+                # SAVE IMAGE
 
                 image_file = customer_image
 
@@ -356,58 +359,85 @@ if page == "New Measurement":
                     "Measurement saved successfully!"
                 )
 
-# =========================================================
 # CUSTOMER RECORDS PAGE
-# =========================================================
 
 if page == "Customer Records":
 
-    st.subheader("Customer Records")
+    st.subheader("Admin Access")
 
-    df = load_data()
+    username = st.text_input("Username")
 
-    search = st.text_input("Search customer")
-
-    if search:
-
-        filtered_df = df[
-            df["Name"].astype(str)
-            .str.lower()
-            .str.contains(search.lower())
-        ]
-
-    else:
-
-        filtered_df = df
-
-    st.dataframe(
-        filtered_df,
-        use_container_width=True
+    password = st.text_input(
+        "Password",
+        type="password"
     )
 
-    # ---------------- CSV DOWNLOAD ----------------
+    login_btn = st.button("Login")
 
-    # st.download_button(
-    #     label="Download CSV",
-    #     data=filtered_df.to_csv(index=False),
-    #     file_name="NE_Clothiers_measurements.csv",
-    #     mime="text/csv"
-    # )
+    if login_btn:
 
-    # # ---------------- EXCEL DOWNLOAD ----------------
+        if (
+            username == ADMIN_USERNAME
+            and password == ADMIN_PASSWORD
+        ):
 
-    # excel_file = "NE_Clothiers_measurements.xlsx"
+            st.success("Access Granted")
 
-    # filtered_df.to_excel(
-    #     excel_file,
-    #     index=False
-    # )
+            st.subheader("Customer Records")
 
-    # with open(excel_file, "rb") as file:
+            df = load_data()
 
-    #     st.download_button(
-    #         label="Download Excel",
-    #         data=file,
-    #         file_name=excel_file,
-    #         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    #     )
+            search = st.text_input(
+                "Search customer"
+            )
+
+            if search:
+
+                filtered_df = df[
+                    df["Name"]
+                    .astype(str)
+                    .str.lower()
+                    .str.contains(search.lower())
+                ]
+
+            else:
+
+                filtered_df = df
+
+            st.dataframe(
+                filtered_df,
+                use_container_width=True
+            )
+
+            # DOWNLOAD CSV
+
+            st.download_button(
+                label="Download CSV",
+                data=filtered_df.to_csv(index=False),
+                file_name="NE_Clothiers_measurements.csv",
+                mime="text/csv"
+            )
+
+            # DOWNLOAD EXCEL
+
+            excel_file = "NE_Clothiers_measurements.xlsx"
+
+            filtered_df.to_excel(
+                excel_file,
+                index=False
+            )
+
+            with open(excel_file, "rb") as file:
+
+                st.download_button(
+                    label="Download Excel",
+                    data=file,
+                    file_name=excel_file,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+        else:
+
+            st.error("Invalid admin credentials")
+
+    

@@ -50,22 +50,6 @@ FIELDS = [
     "Laps", "Knee", "Ankle"
 ]
 
-OUTFIT_FIELDS = {
-    "Agbada":  ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
-                "Round Sleeve", "Top Length", "Hips"],
-    "Senator": ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
-                "Round Sleeve", "Top Length",
-                "Trouser Length", "Trouser-waist", "Hips", "Laps", "Knee", "Ankle"],
-    "Suit":    ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
-                "Top Length",
-                "Trouser Length", "Trouser-waist", "Laps", "Knee", "Ankle"],
-    "Native":  ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
-                "Round Sleeve", "Top Length",
-                "Trouser Length", "Trouser-waist", "Hips", "Laps", "Knee", "Ankle"],
-    "Kaftan":  ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck",
-                "Round Sleeve", "Top Length", "Hips"],
-}
-
 UPPER_BODY = ["Chest", "Stomach", "Shoulder", "Sleeve Length",
               "Neck", "Round Sleeve", "Top Length"]
 LOWER_BODY = ["Trouser Length", "Trouser-waist", "Hips", "Laps", "Knee", "Ankle"]
@@ -356,14 +340,6 @@ if page == "📊 Dashboard":
 elif page == "📋 New Measurement":
     st.subheader("📋 Add New Customer Measurement")
 
-    # Outfit selector lives OUTSIDE the form so changing it
-    # immediately rerenders the measurement fields below.
-    outfit = st.selectbox(
-        "Outfit Type",
-        ["Agbada", "Senator", "Suit", "Native", "Kaftan"],
-        key="outfit_selector"
-    )
-
     with st.form("measurement_form", clear_on_submit=True):
         col1, col2 = st.columns([1, 1])
 
@@ -371,8 +347,10 @@ elif page == "📋 New Measurement":
             st.markdown("#### Customer Info")
             name  = st.text_input("Customer Name *")
             phone = st.text_input("Phone Number")
-            # Show the selected outfit as read-only info inside the form
-            st.markdown(f"**Outfit:** {outfit}")
+            outfit = st.selectbox(
+                "Outfit Type",
+                ["Agbada", "Senator", "Suit", "Native", "Kaftan"]
+            )
             unit = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
             delivery_date   = st.date_input("Expected Delivery Date")
             delivery_status = st.selectbox("Delivery Status",
@@ -394,27 +372,21 @@ elif page == "📋 New Measurement":
 
         with col2:
             st.markdown("#### Body Measurements")
-            st.caption(f"Fields shown for **{outfit}** — greyed fields are not required for this outfit.")
-            active_fields = OUTFIT_FIELDS.get(outfit, UPPER_BODY + LOWER_BODY)
-            meas_values   = {}
+            meas_values = {}
 
             with st.expander("👕 Upper Body", expanded=True):
                 for field in UPPER_BODY:
-                    disabled = field not in active_fields
                     meas_values[field] = st.text_input(
                         field,
-                        placeholder="—" if disabled else f"Enter {field.lower()}",
-                        disabled=disabled,
+                        placeholder=f"Enter {field.lower()}",
                         key=f"meas_{field}"
                     )
 
             with st.expander("👖 Lower Body", expanded=True):
                 for field in LOWER_BODY:
-                    disabled = field not in active_fields
                     meas_values[field] = st.text_input(
                         field,
-                        placeholder="—" if disabled else f"Enter {field.lower()}",
-                        disabled=disabled,
+                        placeholder=f"Enter {field.lower()}",
                         key=f"meas_{field}"
                     )
 

@@ -87,16 +87,16 @@ def load_table():
         for i, row in enumerate(reader):
             table.insert("", "end", iid=i, values=[row[f] for f in FIELDS])
 
-def search_customer():
-    query = search_entry.get().lower()
-    table.delete(*table.get_children())
+# def search_customer():
+#     query = search_entry.get().lower()
+#     table.delete(*table.get_children())
 
-    with open(FILE_NAME, newline="") as f:
-        reader = csv.DictReader(f)
+#     with open(FILE_NAME, newline="") as f:
+#         reader = csv.DictReader(f)
 
-        for i, row in enumerate(reader):
-            if query in row["Name"].lower():
-                table.insert("", "end", iid=i, values=[row[f] for f in FIELDS])
+#         for i, row in enumerate(reader):
+#             if query in row["Name"].lower():
+#                 table.insert("", "end", iid=i, values=[row[f] for f in FIELDS])
 
 def on_row_select(event):
     global selected_index

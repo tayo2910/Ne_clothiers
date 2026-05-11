@@ -126,7 +126,7 @@ h1, h2, h3 {{
 }}
 
 .stSelectbox div {{
-    color: {TEXT_COLOR};
+    color: white;
 }}
 
 .stButton button {{

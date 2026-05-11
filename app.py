@@ -98,7 +98,7 @@ h1, h2, h3 {{
 }}
 
 .main-title {{
-    font-size: 48px;
+    font-size: 70px;
     font-weight: 850;
     color: white;
     margin-top: 20px;

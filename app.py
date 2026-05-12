@@ -5,6 +5,7 @@
 import os
 import io
 import re
+import uuid
 from datetime import datetime, date
 
 import pandas as pd
@@ -39,10 +40,10 @@ os.makedirs(RECEIPT_FOLDER, exist_ok=True)
 
 # ── FIELDS ───────────────────────────────────────────────────
 FIELDS = [
-    "Name", "Phone", "Outfit Type", "Unit",
+    "Order ID", "Name", "Phone", "Outfit Type", "Unit",
     "Date Created", "Expected Delivery Date",
     "Payment Status", "Amount Paid",
-    "Receipt File", "Customer Image", "Customer Notes",
+    "Receipt File", "Design Photo", "Customer Notes",
     "Delivery Status",
     "Chest", "Stomach", "Shoulder", "Sleeve Length",
     "Neck", "Round Sleeve", "Top Length",
@@ -96,6 +97,13 @@ def validate_phone(phone: str) -> bool:
     return bool(re.match(r'^[0-9+\-\s]{7,15}$', phone)) if phone else True
 
 
+def generate_order_id() -> str:
+    """Generate a unique order tracking ID like NEC-2026-A3F7."""
+    suffix = uuid.uuid4().hex[:4].upper()
+    year   = datetime.now().year
+    return f"NEC-{year}-{suffix}"
+
+
 def is_overdue(row) -> bool:
     try:
         delivery = pd.to_datetime(row["Expected Delivery Date"])
@@ -126,6 +134,7 @@ def generate_pdf_receipt(record: dict) -> bytes:
         pdf.cell(0, 8, str(value), ln=True)
 
     for label, key in [
+        ("Order ID",        "Order ID"),
         ("Customer Name",   "Name"),
         ("Phone",           "Phone"),
         ("Outfit Type",     "Outfit Type"),
@@ -264,8 +273,8 @@ with st.sidebar:
     st.title("NE Clothiers")
     st.markdown("---")
 
-    # Build nav options — Dashboard only visible to logged-in admins
-    nav_options = ["📋 New Measurement", "🔍 Order Tracking", "🗂️ Customer Records"]
+    # Dashboard only visible to logged-in admins
+    nav_options = ["📋 New Measurement", "🔍 Order Tracking"]
     if st.session_state.logged_in:
         nav_options = ["📊 Dashboard"] + nav_options
 
@@ -278,7 +287,17 @@ with st.sidebar:
             st.session_state.logged_in = False
             st.rerun()
     else:
-        st.caption("🔒 Admin? Log in via Customer Records.")
+        st.markdown("#### 🔒 Admin Login")
+        with st.form("sidebar_login"):
+            s_user = st.text_input("Username")
+            s_pass = st.text_input("Password", type="password")
+            s_btn  = st.form_submit_button("Login")
+        if s_btn:
+            if s_user == ADMIN_USERNAME and s_pass == ADMIN_PASSWORD:
+                st.session_state.logged_in = True
+                st.rerun()
+            else:
+                st.error("Invalid credentials.")
 
 # ════════════════════════════════════════════════════════════
 # PAGE: DASHBOARD (admin only)
@@ -366,23 +385,6 @@ elif page == "📋 New Measurement":
                 ["Agbada", "Senator", "Suit", "Native", "Kaftan"]
             )
             unit = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
-            delivery_date   = st.date_input("Expected Delivery Date")
-            delivery_status = st.selectbox("Delivery Status",
-                                           ["Pending", "In Progress", "Ready", "Delivered"])
-            payment_status  = st.selectbox("Payment Status",
-                                           ["Not Paid", "Part Payment", "Fully Paid"])
-            amount_paid = st.number_input("Amount Paid (₦)", min_value=0.0, step=1000.0)
-            st.markdown("---")
-            st.markdown("**Payment Receipt**")
-            receipt = st.file_uploader("Upload receipt",
-                                       type=["png", "jpg", "jpeg", "pdf"],
-                                       label_visibility="collapsed")
-            st.markdown("**Customer Photo** — upload a file or use the camera below")
-            customer_image = st.file_uploader("Upload photo",
-                                              type=["png", "jpg", "jpeg"],
-                                              label_visibility="collapsed")
-            camera_photo = st.camera_input("📷 Take Photo")
-            notes = st.text_area("Customer Notes", placeholder="Any special instructions...")
 
         with col2:
             st.markdown("#### Body Measurements")
@@ -420,322 +422,231 @@ elif page == "📋 New Measurement":
                 for e in errors:
                     st.error(e)
             else:
-                receipt_filename = ""
-                image_filename   = ""
-
-                if receipt is not None:
-                    receipt_filename = receipt.name
-                    with open(os.path.join(RECEIPT_FOLDER, receipt_filename), "wb") as f:
-                        f.write(receipt.getbuffer())
-
-                image_file = camera_photo if camera_photo is not None else customer_image
-                if image_file is not None:
-                    image_filename = image_file.name
-                    with open(os.path.join(IMAGE_FOLDER, image_filename), "wb") as f:
-                        f.write(image_file.getbuffer())
-
+                order_id = generate_order_id()
                 data = {
+                    "Order ID":               order_id,
                     "Name":                   name.strip(),
                     "Phone":                  phone,
                     "Outfit Type":            outfit,
                     "Unit":                   unit,
                     "Date Created":           datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Expected Delivery Date": str(delivery_date),
-                    "Delivery Status":        delivery_status,
-                    "Payment Status":         payment_status,
-                    "Amount Paid":            amount_paid,
-                    "Receipt File":           receipt_filename,
-                    "Customer Image":         image_filename,
-                    "Customer Notes":         notes,
+                    "Expected Delivery Date": "",
+                    "Delivery Status":        "Pending",
+                    "Payment Status":         "Not Paid",
+                    "Amount Paid":            0,
+                    "Receipt File":           "",
+                    "Design Photo":           "",
+                    "Customer Notes":         "",
                     **meas_values
                 }
 
                 save_data(data)
-                st.success("✅ Measurement saved successfully!")
-                st.info(
-                    f"**{name.strip()}** | {outfit} | "
-                    f"Delivery: {delivery_date} | {payment_status}"
-                )
-                if image_file is not None:
-                    st.image(image_file, caption="Customer Photo", width=220)
+                st.success(f"✅ Measurement saved! Order ID: **{order_id}**")
+                st.info(f"**{name.strip()}** | {outfit} | Share the Order ID with your customer so they can track their order.")
 
 # ════════════════════════════════════════════════════════════
 # PAGE: ORDER TRACKING (public)
 # ════════════════════════════════════════════════════════════
 elif page == "🔍 Order Tracking":
     st.subheader("🔍 Track Your Order")
-    st.markdown("Enter your name or phone number to check the status of your order.")
 
     df = load_data()
 
-    search_query = st.text_input(
-        "Your Name or Phone Number",
-        placeholder="e.g. John Doe or 08012345678"
-    )
+    # ── SEARCH ───────────────────────────────────────────────
+    st.markdown("Search by your **Order ID**, **name**, or **phone number**.")
+
+    search_col1, search_col2 = st.columns([3, 1])
+    with search_col1:
+        search_query = st.text_input(
+            "Search",
+            placeholder="e.g. NEC-2026-A3F7  or  John Doe  or  08012345678",
+            label_visibility="collapsed"
+        )
+    with search_col2:
+        search_btn = st.button("🔍 Search", use_container_width=True)
+
+    results = pd.DataFrame()
 
     if search_query.strip():
+        q = search_query.strip().lower()
         mask = (
-            df["Name"].astype(str).str.lower().str.contains(search_query.strip().lower(), na=False) |
-            df["Phone"].astype(str).str.lower().str.contains(search_query.strip().lower(), na=False)
+            df["Order ID"].astype(str).str.lower().str.contains(q, na=False) |
+            df["Name"].astype(str).str.lower().str.contains(q, na=False) |
+            df["Phone"].astype(str).str.lower().str.contains(q, na=False)
         )
         results = df[mask]
 
         if results.empty:
-            st.warning("No orders found. Please check your name or phone number and try again.")
+            st.warning("No orders found. Check your Order ID, name, or phone number and try again.")
         else:
-            st.success(f"Found {len(results)} order(s) for **{search_query}**")
+            st.success(f"Found {len(results)} order(s)")
 
-            for _, row in results.iterrows():
+            for row_idx, row in results.iterrows():
                 delivery_status = str(row.get("Delivery Status", "Pending"))
 
-                # Status colour and icon
-                status_style = {
+                status_map = {
                     "Pending":     ("🕐", "#F59E0B", "#1C1400"),
                     "In Progress": ("🔧", "#3B82F6", "#0A1628"),
                     "Ready":       ("✅", "#10B981", "#021A0E"),
                     "Delivered":   ("📦", "#6B7280", "#111827"),
-                }.get(delivery_status, ("🕐", "#F59E0B", "#1C1400"))
+                }
+                icon, badge_color, badge_bg = status_map.get(
+                    delivery_status, ("🕐", "#F59E0B", "#1C1400")
+                )
 
-                icon, badge_color, badge_bg = status_style
+                order_id      = row.get("Order ID", "—")
+                delivery_date = row.get("Expected Delivery Date", "—") or "—"
+                amount        = float(row.get("Amount Paid") or 0)
 
                 st.markdown(f"""
                 <div style="
                     background-color: #1E3A6E;
                     border-radius: 14px;
-                    padding: 20px 24px;
-                    margin-bottom: 16px;
+                    padding: 22px 26px;
+                    margin-bottom: 18px;
                     border-left: 5px solid {badge_color};
                 ">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
                         <div>
-                            <h3 style="color:white; margin:0 0 4px 0;">{row.get("Name", "")}</h3>
-                            <p style="color:#93C5FD; margin:0; font-size:14px;">
+                            <p style="color:#93C5FD; margin:0 0 2px 0; font-size:12px; letter-spacing:1px;">ORDER ID</p>
+                            <h2 style="color:white; margin:0 0 6px 0; font-size:22px; letter-spacing:2px;">{order_id}</h2>
+                            <h3 style="color:white; margin:0 0 4px 0; font-size:17px;">{row.get("Name", "")}</h3>
+                            <p style="color:#93C5FD; margin:0; font-size:13px;">
                                 📱 {row.get("Phone", "—")} &nbsp;|&nbsp;
                                 👔 {row.get("Outfit Type", "—")} &nbsp;|&nbsp;
-                                📅 Order date: {row.get("Date Created", "—")}
+                                🗓️ Placed: {row.get("Date Created", "—")}
                             </p>
                         </div>
                         <div style="
                             background-color: {badge_bg};
                             border: 2px solid {badge_color};
                             border-radius: 20px;
-                            padding: 6px 16px;
+                            padding: 8px 20px;
                             font-weight: bold;
                             color: {badge_color};
-                            font-size: 15px;
+                            font-size: 16px;
                             white-space: nowrap;
+                            align-self: center;
                         ">
                             {icon} {delivery_status}
                         </div>
                     </div>
-                    <hr style="border-color:#2563EB44; margin: 14px 0;">
+                    <hr style="border-color:#2563EB44; margin: 16px 0 14px 0;">
                     <div style="display:flex; gap:40px; flex-wrap:wrap;">
                         <div>
-                            <p style="color:#94A3B8; margin:0; font-size:12px;">EXPECTED DELIVERY</p>
-                            <p style="color:white; margin:0; font-size:15px; font-weight:600;">
-                                📆 {row.get("Expected Delivery Date", "—")}
-                            </p>
+                            <p style="color:#94A3B8; margin:0; font-size:11px; letter-spacing:1px;">EXPECTED DELIVERY</p>
+                            <p style="color:white; margin:2px 0 0 0; font-size:15px; font-weight:600;">📆 {delivery_date}</p>
                         </div>
                         <div>
-                            <p style="color:#94A3B8; margin:0; font-size:12px;">PAYMENT STATUS</p>
-                            <p style="color:white; margin:0; font-size:15px; font-weight:600;">
-                                💳 {row.get("Payment Status", "—")}
-                            </p>
+                            <p style="color:#94A3B8; margin:0; font-size:11px; letter-spacing:1px;">PAYMENT STATUS</p>
+                            <p style="color:white; margin:2px 0 0 0; font-size:15px; font-weight:600;">💳 {row.get("Payment Status", "—")}</p>
                         </div>
                         <div>
-                            <p style="color:#94A3B8; margin:0; font-size:12px;">AMOUNT PAID</p>
-                            <p style="color:white; margin:0; font-size:15px; font-weight:600;">
-                                ₦{float(row.get("Amount Paid") or 0):,.0f}
-                            </p>
+                            <p style="color:#94A3B8; margin:0; font-size:11px; letter-spacing:1px;">AMOUNT PAID</p>
+                            <p style="color:white; margin:2px 0 0 0; font-size:15px; font-weight:600;">₦{amount:,.0f}</p>
+                        </div>
+                        <div>
+                            <p style="color:#94A3B8; margin:0; font-size:11px; letter-spacing:1px;">NOTES</p>
+                            <p style="color:white; margin:2px 0 0 0; font-size:14px;">{row.get("Customer Notes", "—") or "—"}</p>
                         </div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-    else:
-        # Show a friendly prompt when nothing is typed yet
+    st.markdown("---")
+
+    # ── ORDER DETAILS FORM ───────────────────────────────────
+    st.markdown("### 📝 Submit Order Details")
+    st.markdown(
+        "Already have an Order ID? Use this form to add your delivery date, "
+        "payment info, design photo, and notes."
+    )
+
+    with st.form("order_details_form", clear_on_submit=True):
+        od_col1, od_col2 = st.columns([1, 1])
+
+        with od_col1:
+            od_order_id     = st.text_input("Order ID *", placeholder="e.g. NEC-2026-A3F7")
+            od_delivery     = st.date_input("Expected Delivery Date")
+            od_payment      = st.selectbox("Payment Status",
+                                           ["Not Paid", "Part Payment", "Fully Paid"])
+            od_amount       = st.number_input("Amount Paid (₦)", min_value=0.0, step=1000.0)
+            od_notes        = st.text_area("Customer Notes",
+                                           placeholder="Special instructions, style preferences...")
+
+        with od_col2:
+            st.markdown("**Payment Receipt**")
+            od_receipt      = st.file_uploader("Upload receipt",
+                                               type=["png", "jpg", "jpeg", "pdf"],
+                                               label_visibility="collapsed",
+                                               key="od_receipt")
+            st.markdown("**Design / Style Photo**")
+            st.caption("Upload a photo of the design or style you want.")
+            od_design       = st.file_uploader("Upload design photo",
+                                               type=["png", "jpg", "jpeg"],
+                                               label_visibility="collapsed",
+                                               key="od_design")
+            if od_design:
+                st.image(od_design, caption="Design Preview", use_container_width=True)
+
+        od_submit = st.form_submit_button("📤 Submit Order Details", use_container_width=True)
+
+        if od_submit:
+            if not od_order_id.strip():
+                st.error("Order ID is required.")
+            else:
+                df_check = load_data()
+                match = df_check[
+                    df_check["Order ID"].astype(str).str.upper() == od_order_id.strip().upper()
+                ]
+
+                if match.empty:
+                    st.error(f"No order found with ID **{od_order_id.strip()}**. Please check and try again.")
+                else:
+                    record_idx = match.index[0]
+
+                    receipt_filename = str(df_check.at[record_idx, "Receipt File"] or "")
+                    design_filename  = str(df_check.at[record_idx, "Design Photo"] or "")
+
+                    if od_receipt is not None:
+                        receipt_filename = od_receipt.name
+                        with open(os.path.join(RECEIPT_FOLDER, receipt_filename), "wb") as f:
+                            f.write(od_receipt.getbuffer())
+
+                    if od_design is not None:
+                        design_filename = od_design.name
+                        with open(os.path.join(IMAGE_FOLDER, design_filename), "wb") as f:
+                            f.write(od_design.getbuffer())
+
+                    update_record(record_idx, {
+                        "Expected Delivery Date": str(od_delivery),
+                        "Payment Status":         od_payment,
+                        "Amount Paid":            od_amount,
+                        "Customer Notes":         od_notes,
+                        "Receipt File":           receipt_filename,
+                        "Design Photo":           design_filename,
+                    })
+
+                    st.success(f"✅ Order details updated for **{od_order_id.strip().upper()}**!")
+                    st.info(
+                        f"Delivery: {od_delivery} | {od_payment} | ₦{od_amount:,.0f}"
+                    )
+
+    # ── EMPTY STATE ──────────────────────────────────────────
+    if not search_query.strip():
         st.markdown("""
         <div style="
             background-color: #1E3A6E;
             border-radius: 14px;
             padding: 30px;
             text-align: center;
-            margin-top: 20px;
+            margin-top: 10px;
         ">
             <p style="font-size: 48px; margin: 0;">✂️</p>
             <h3 style="color: white; margin: 10px 0 6px 0;">NE Clothiers Order Tracker</h3>
             <p style="color: #93C5FD; margin: 0;">
-                Type your name or phone number above to see your order status.
+                Search by Order ID, name, or phone number to view your order status.
             </p>
         </div>
         """, unsafe_allow_html=True)
 
-# ════════════════════════════════════════════════════════════
-# PAGE: CUSTOMER RECORDS
-# ════════════════════════════════════════════════════════════
-elif page == "🗂️ Customer Records":
-    st.subheader("🗂️ Customer Records")
-
-    # ── LOGIN ────────────────────────────────────────────────
-    if not st.session_state.logged_in:
-        st.markdown("#### Admin Access")
-        with st.form("login_form"):
-            username  = st.text_input("Username")
-            password  = st.text_input("Password", type="password")
-            login_btn = st.form_submit_button("🔐 Login")
-
-        if login_btn:
-            if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-                st.session_state.logged_in = True
-                st.rerun()
-            else:
-                st.error("Invalid credentials. Please try again.")
-
-    # ── RECORDS VIEW ─────────────────────────────────────────
-    else:
-        df = load_data()
-
-        fc1, fc2, fc3 = st.columns([2, 1, 1])
-        with fc1:
-            search = st.text_input("🔍 Search by name or phone",
-                                   placeholder="Type to search...")
-        with fc2:
-            outfit_opts = ["All"] + sorted(df["Outfit Type"].dropna().unique().tolist())
-            filter_outfit = st.selectbox("Filter by Outfit", outfit_opts)
-        with fc3:
-            filter_payment = st.selectbox("Filter by Payment",
-                                          ["All", "Not Paid", "Part Payment", "Fully Paid"])
-
-        filtered_df = df.copy()
-        if search:
-            mask = (
-                filtered_df["Name"].astype(str).str.lower().str.contains(search.lower(), na=False) |
-                filtered_df["Phone"].astype(str).str.lower().str.contains(search.lower(), na=False)
-            )
-            filtered_df = filtered_df[mask]
-        if filter_outfit != "All":
-            filtered_df = filtered_df[filtered_df["Outfit Type"] == filter_outfit]
-        if filter_payment != "All":
-            filtered_df = filtered_df[filtered_df["Payment Status"] == filter_payment]
-
-        st.caption(f"Showing {len(filtered_df)} of {len(df)} records")
-        st.dataframe(filtered_df, use_container_width=True, height=320)
-
-        # ── EDIT / DELETE ──
-        st.markdown("---")
-        st.markdown("#### Edit or Delete a Record")
-
-        if not filtered_df.empty:
-            record_options = {
-                f"{row['Name']} — {row.get('Outfit Type', '')} ({row.get('Date Created', '')})": idx
-                for idx, row in filtered_df.iterrows()
-            }
-            selected_label = st.selectbox("Select a record", list(record_options.keys()))
-            selected_idx   = record_options[selected_label]
-            selected_row   = df.loc[selected_idx]
-
-            action_col1, action_col2 = st.columns(2)
-
-            with action_col1:
-                with st.expander("✏️ Edit Selected Record"):
-                    outfit_list   = ["Agbada", "Senator", "Suit", "Native", "Kaftan"]
-                    delivery_list = ["Pending", "In Progress", "Ready", "Delivered"]
-                    payment_list  = ["Not Paid", "Part Payment", "Fully Paid"]
-
-                    def safe_index(lst, val, default=0):
-                        return lst.index(val) if val in lst else default
-
-                    with st.form("edit_form"):
-                        e_name     = st.text_input("Name",
-                                                   value=str(selected_row.get("Name", "")))
-                        e_phone    = st.text_input("Phone",
-                                                   value=str(selected_row.get("Phone", "")))
-                        e_outfit   = st.selectbox("Outfit Type", outfit_list,
-                                                  index=safe_index(outfit_list,
-                                                                   selected_row.get("Outfit Type", "")))
-                        e_delivery = st.selectbox("Delivery Status", delivery_list,
-                                                  index=safe_index(delivery_list,
-                                                                   selected_row.get("Delivery Status", "")))
-                        e_payment  = st.selectbox("Payment Status", payment_list,
-                                                  index=safe_index(payment_list,
-                                                                   selected_row.get("Payment Status", "")))
-                        e_amount   = st.number_input(
-                            "Amount Paid (₦)",
-                            value=float(selected_row.get("Amount Paid") or 0),
-                            min_value=0.0, step=1000.0
-                        )
-                        e_notes    = st.text_area("Notes",
-                                                  value=str(selected_row.get("Customer Notes", "")))
-                        save_edit  = st.form_submit_button("💾 Save Changes")
-
-                    if save_edit:
-                        update_record(selected_idx, {
-                            "Name":            e_name,
-                            "Phone":           e_phone,
-                            "Outfit Type":     e_outfit,
-                            "Delivery Status": e_delivery,
-                            "Payment Status":  e_payment,
-                            "Amount Paid":     e_amount,
-                            "Customer Notes":  e_notes,
-                        })
-                        st.success("Record updated.")
-                        st.rerun()
-
-            with action_col2:
-                with st.expander("🗑️ Delete Selected Record"):
-                    st.warning(
-                        f"You are about to delete **{selected_row.get('Name', '')}**. "
-                        "This cannot be undone."
-                    )
-                    confirm_name = st.text_input("Type the customer name to confirm")
-                    if st.button("🗑️ Confirm Delete", type="primary"):
-                        if confirm_name.strip().lower() == str(selected_row.get("Name", "")).strip().lower():
-                            delete_record(selected_idx)
-                            st.success("Record deleted.")
-                            st.rerun()
-                        else:
-                            st.error("Name does not match. Deletion cancelled.")
-
-        # ── PDF RECEIPT ──
-        st.markdown("---")
-        st.markdown("#### 🧾 Generate PDF Receipt")
-        if not filtered_df.empty:
-            pdf_options = {
-                f"{row['Name']} — {row.get('Outfit Type', '')}": idx
-                for idx, row in filtered_df.iterrows()
-            }
-            pdf_label = st.selectbox("Select customer for receipt",
-                                     list(pdf_options.keys()), key="pdf_select")
-            pdf_idx   = pdf_options[pdf_label]
-            pdf_row   = df.loc[pdf_idx].to_dict()
-            pdf_bytes = generate_pdf_receipt(pdf_row)
-            safe_name = pdf_row.get("Name", "customer").replace(" ", "_")
-            st.download_button(
-                label="📄 Download PDF Receipt",
-                data=pdf_bytes,
-                file_name=f"receipt_{safe_name}.pdf",
-                mime="application/pdf"
-            )
-
-        # ── EXPORTS ──
-        st.markdown("---")
-        st.markdown("#### 📥 Export Records")
-        dl1, dl2 = st.columns(2)
-
-        with dl1:
-            st.download_button(
-                label="⬇️ Download CSV",
-                data=filtered_df.to_csv(index=False),
-                file_name="NE_Clothiers_measurements.csv",
-                mime="text/csv"
-            )
-
-        with dl2:
-            excel_buffer = io.BytesIO()
-            filtered_df.to_excel(excel_buffer, index=False, engine="openpyxl")
-            st.download_button(
-                label="⬇️ Download Excel",
-                data=excel_buffer.getvalue(),
-                file_name="NE_Clothiers_measurements.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )

@@ -188,6 +188,8 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "pending_order_id" not in st.session_state:
     st.session_state.pending_order_id = None
+if "just_saved_order" not in st.session_state:
+    st.session_state.just_saved_order = False
 
 # ── CUSTOM CSS ───────────────────────────────────────────────
 st.markdown(f"""
@@ -614,16 +616,21 @@ elif page == "📋 New Measurement":
 
                 save_data(data)
                 st.session_state.pending_order_id = order_id
+                st.session_state.just_saved_order = True
                 st.success(f"✅ Measurement saved! Order ID: **{order_id}**")
                 st.info(f"**{name.strip()}** | {outfit}")
-                st.markdown("---")
-                st.markdown("### 📋 Next Step: Submit Order Details")
-                st.markdown(
-                    "Your measurements are saved. Now add delivery date, payment info, "
-                    "and any special notes by clicking below."
-                )
-                if st.button("➡️ Continue to Order Details", type="primary", use_container_width=True):
-                    st.rerun()
+
+# Show "Continue" button outside the form, after a successful save
+if st.session_state.just_saved_order:
+    st.markdown("---")
+    st.markdown("### 📋 Next Step: Submit Order Details")
+    st.markdown(
+        "Measurements saved. Click below to add delivery date, "
+        "payment info, and any special notes."
+    )
+    if st.button("➡️ Continue to Order Details", type="primary", use_container_width=True):
+        st.session_state.just_saved_order = False
+        st.rerun()
 
 # ════════════════════════════════════════════════════════════
 # PAGE: ORDER TRACKING (public)
@@ -635,6 +642,12 @@ elif page == "🔍 Order Tracking":
 
     # ── SEARCH ───────────────────────────────────────────────
     st.markdown("Search by your **Order ID**, **name**, or **phone number**.")
+
+    # Pick up Order ID passed from New Measurement form (must happen before search box renders)
+    found_order_id = ""
+    if st.session_state.pending_order_id:
+        found_order_id = st.session_state.pending_order_id
+        st.session_state.pending_order_id = None  # consume it
 
     search_col1, search_col2 = st.columns([3, 1])
     with search_col1:
@@ -648,12 +661,6 @@ elif page == "🔍 Order Tracking":
         search_btn = st.button("🔍 Search", use_container_width=True)
 
     results = pd.DataFrame()
-    found_order_id = ""
-
-    # Pick up Order ID passed from New Measurement form
-    if st.session_state.pending_order_id:
-        found_order_id = st.session_state.pending_order_id
-        st.session_state.pending_order_id = None  # consume it
 
     if search_query.strip():
         q = search_query.strip().lower()

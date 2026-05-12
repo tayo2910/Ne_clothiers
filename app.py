@@ -186,6 +186,8 @@ def generate_pdf_receipt(record: dict) -> bytes:
 # ── SESSION STATE DEFAULTS ────────────────────────────────────
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+if "pending_order_id" not in st.session_state:
+    st.session_state.pending_order_id = None
 
 # ── CUSTOM CSS ───────────────────────────────────────────────
 st.markdown(f"""
@@ -288,7 +290,11 @@ with st.sidebar:
     st.markdown("---")
 
     # All users see the same 3 nav items — Dashboard is hidden inside Admin
-    page = st.radio("Navigate", ["📋 New Measurement", "🔍 Order Tracking", "🔐 Admin"])
+    page = st.radio(
+        "Navigate",
+        ["📋 New Measurement", "🔍 Order Tracking", "🔐 Admin"],
+        index=1 if st.session_state.pending_order_id else 0
+    )
     st.markdown("---")
 
     if st.session_state.logged_in:
@@ -607,8 +613,17 @@ elif page == "📋 New Measurement":
                 }
 
                 save_data(data)
+                st.session_state.pending_order_id = order_id
                 st.success(f"✅ Measurement saved! Order ID: **{order_id}**")
-                st.info(f"**{name.strip()}** | {outfit} | Share the Order ID with your customer so they can track their order.")
+                st.info(f"**{name.strip()}** | {outfit}")
+                st.markdown("---")
+                st.markdown("### 📋 Next Step: Submit Order Details")
+                st.markdown(
+                    "Your measurements are saved. Now add delivery date, payment info, "
+                    "and any special notes by clicking below."
+                )
+                if st.button("➡️ Continue to Order Details", type="primary", use_container_width=True):
+                    st.rerun()
 
 # ════════════════════════════════════════════════════════════
 # PAGE: ORDER TRACKING (public)
@@ -625,6 +640,7 @@ elif page == "🔍 Order Tracking":
     with search_col1:
         search_query = st.text_input(
             "Search",
+            value=found_order_id,
             placeholder="e.g. NEC-2026-A3F7  or  John Doe  or  08012345678",
             label_visibility="collapsed"
         )
@@ -633,6 +649,11 @@ elif page == "🔍 Order Tracking":
 
     results = pd.DataFrame()
     found_order_id = ""
+
+    # Pick up Order ID passed from New Measurement form
+    if st.session_state.pending_order_id:
+        found_order_id = st.session_state.pending_order_id
+        st.session_state.pending_order_id = None  # consume it
 
     if search_query.strip():
         q = search_query.strip().lower()

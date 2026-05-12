@@ -273,12 +273,8 @@ with st.sidebar:
     st.title("NE Clothiers")
     st.markdown("---")
 
-    # Dashboard only visible to logged-in admins
-    nav_options = ["📋 New Measurement", "🔍 Order Tracking"]
-    if st.session_state.logged_in:
-        nav_options = ["📊 Dashboard"] + nav_options
-
-    page = st.radio("Navigate", nav_options)
+    # All users see the same 3 nav items — Dashboard is hidden inside Admin
+    page = st.radio("Navigate", ["📋 New Measurement", "🔍 Order Tracking", "🔐 Admin"])
     st.markdown("---")
 
     if st.session_state.logged_in:
@@ -286,86 +282,224 @@ with st.sidebar:
         if st.button("🚪 Logout"):
             st.session_state.logged_in = False
             st.rerun()
-    else:
-        st.markdown("#### 🔒 Admin Login")
-        with st.form("sidebar_login"):
-            s_user = st.text_input("Username")
-            s_pass = st.text_input("Password", type="password")
-            s_btn  = st.form_submit_button("Login")
-        if s_btn:
-            if s_user == ADMIN_USERNAME and s_pass == ADMIN_PASSWORD:
+
+# ════════════════════════════════════════════════════════════
+# PAGE: ADMIN (login-gated — dashboard lives here)
+# ════════════════════════════════════════════════════════════
+if page == "� Admin":
+    if not st.session_state.logged_in:
+        # Show a plain login form — no mention of "admin" or "dashboard"
+        st.markdown(
+            "<div style='max-width:400px; margin:60px auto 0 auto;'>",
+            unsafe_allow_html=True
+        )
+        st.markdown("#### Sign In")
+        with st.form("admin_login_form"):
+            a_user = st.text_input("Username")
+            a_pass = st.text_input("Password", type="password")
+            a_btn  = st.form_submit_button("Sign In", use_container_width=True)
+        if a_btn:
+            if a_user == ADMIN_USERNAME and a_pass == ADMIN_PASSWORD:
                 st.session_state.logged_in = True
                 st.rerun()
             else:
-                st.error("Invalid credentials.")
+                st.error("Incorrect username or password.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-# ════════════════════════════════════════════════════════════
-# PAGE: DASHBOARD (admin only)
-# ════════════════════════════════════════════════════════════
-if page == "📊 Dashboard":
-    if not st.session_state.logged_in:
-        st.error("🔒 Access denied. This page is for admins only.")
-        st.stop()
-
-    st.subheader("📊 Dashboard")
-    df = load_data()
-
-    if df.empty:
-        st.info("No records yet. Add your first customer measurement to see stats here.")
     else:
-        total      = len(df)
-        fully_paid = len(df[df["Payment Status"] == "Fully Paid"])
-        part_paid  = len(df[df["Payment Status"] == "Part Payment"])
-        not_paid   = len(df[df["Payment Status"] == "Not Paid"])
+        # ── DASHBOARD ────────────────────────────────────────
+        st.subheader("📊 Dashboard")
+        df = load_data()
 
-        today = pd.Timestamp(date.today())
-        try:
-            df["_delivery_dt"] = pd.to_datetime(df["Expected Delivery Date"], errors="coerce")
-            due_this_week = df[
-                (df["_delivery_dt"] >= today) &
-                (df["_delivery_dt"] <= today + pd.Timedelta(days=7))
-            ]
-            delivery_col = df.get("Delivery Status", pd.Series([""] * len(df)))
-            overdue = df[
-                (df["_delivery_dt"] < today) &
-                (delivery_col.astype(str) != "Delivered")
-            ]
-        except Exception:
-            due_this_week = pd.DataFrame()
-            overdue       = pd.DataFrame()
+        if df.empty:
+            st.info("No records yet. Add your first customer measurement to see stats here.")
+        else:
+            total      = len(df)
+            fully_paid = len(df[df["Payment Status"] == "Fully Paid"])
+            part_paid  = len(df[df["Payment Status"] == "Part Payment"])
 
-        total_collected = pd.to_numeric(df["Amount Paid"], errors="coerce").sum()
+            today = pd.Timestamp(date.today())
+            try:
+                df["_delivery_dt"] = pd.to_datetime(df["Expected Delivery Date"], errors="coerce")
+                due_this_week = df[
+                    (df["_delivery_dt"] >= today) &
+                    (df["_delivery_dt"] <= today + pd.Timedelta(days=7))
+                ]
+                delivery_col = df.get("Delivery Status", pd.Series([""] * len(df)))
+                overdue = df[
+                    (df["_delivery_dt"] < today) &
+                    (delivery_col.astype(str) != "Delivered")
+                ]
+            except Exception:
+                due_this_week = pd.DataFrame()
+                overdue       = pd.DataFrame()
 
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("👥 Total Customers", total)
-        c2.metric("✅ Fully Paid",       fully_paid)
-        c3.metric("🕐 Part Payment",     part_paid)
-        c4.metric("📅 Due This Week",    len(due_this_week))
-        c5.metric("⚠️ Overdue",          len(overdue))
+            total_collected = pd.to_numeric(df["Amount Paid"], errors="coerce").sum()
 
-        st.markdown(f"### 💰 Total Collected: ₦{total_collected:,.0f}")
-        st.markdown("---")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("👥 Total Customers", total)
+            c2.metric("✅ Fully Paid",       fully_paid)
+            c3.metric("🕐 Part Payment",     part_paid)
+            c4.metric("📅 Due This Week",    len(due_this_week))
+            c5.metric("⚠️ Overdue",          len(overdue))
 
-        chart_col1, chart_col2 = st.columns(2)
-        with chart_col1:
-            st.markdown("**Payment Status Breakdown**")
-            st.bar_chart(df["Payment Status"].value_counts())
-        with chart_col2:
-            st.markdown("**Outfit Type Breakdown**")
-            st.bar_chart(df["Outfit Type"].value_counts())
-
-        st.markdown("---")
-        st.markdown("**🕐 5 Most Recent Entries**")
-        recent_cols = ["Name", "Phone", "Outfit Type", "Payment Status",
-                       "Expected Delivery Date", "Delivery Status"]
-        st.dataframe(df.tail(5)[recent_cols].iloc[::-1], use_container_width=True)
-
-        if not overdue.empty:
+            st.markdown(f"### 💰 Total Collected: ₦{total_collected:,.0f}")
             st.markdown("---")
-            st.markdown("**🚨 Overdue Orders**")
-            overdue_cols = ["Name", "Phone", "Outfit Type",
-                            "Expected Delivery Date", "Payment Status"]
-            st.dataframe(overdue[overdue_cols], use_container_width=True)
+
+            chart_col1, chart_col2 = st.columns(2)
+            with chart_col1:
+                st.markdown("**Payment Status Breakdown**")
+                st.bar_chart(df["Payment Status"].value_counts())
+            with chart_col2:
+                st.markdown("**Outfit Type Breakdown**")
+                st.bar_chart(df["Outfit Type"].value_counts())
+
+            st.markdown("---")
+            st.markdown("**🕐 5 Most Recent Entries**")
+            recent_cols = ["Order ID", "Name", "Phone", "Outfit Type",
+                           "Payment Status", "Expected Delivery Date", "Delivery Status"]
+            st.dataframe(df.tail(5)[recent_cols].iloc[::-1], use_container_width=True)
+
+            if not overdue.empty:
+                st.markdown("---")
+                st.markdown("**🚨 Overdue Orders**")
+                overdue_cols = ["Order ID", "Name", "Phone", "Outfit Type",
+                                "Expected Delivery Date", "Payment Status"]
+                st.dataframe(overdue[overdue_cols], use_container_width=True)
+
+        st.markdown("---")
+
+        # ── ALL RECORDS TABLE ─────────────────────────────────
+        st.markdown("#### 🗂️ All Records")
+        df_all = load_data()
+
+        fa1, fa2, fa3 = st.columns([2, 1, 1])
+        with fa1:
+            a_search = st.text_input("🔍 Search", placeholder="Name, phone, or Order ID...")
+        with fa2:
+            outfit_opts = ["All"] + sorted(df_all["Outfit Type"].dropna().unique().tolist())
+            a_outfit = st.selectbox("Outfit", outfit_opts)
+        with fa3:
+            a_payment = st.selectbox("Payment", ["All", "Not Paid", "Part Payment", "Fully Paid"])
+
+        filtered = df_all.copy()
+        if a_search:
+            q = a_search.lower()
+            filtered = filtered[
+                filtered["Name"].astype(str).str.lower().str.contains(q, na=False) |
+                filtered["Phone"].astype(str).str.lower().str.contains(q, na=False) |
+                filtered["Order ID"].astype(str).str.lower().str.contains(q, na=False)
+            ]
+        if a_outfit != "All":
+            filtered = filtered[filtered["Outfit Type"] == a_outfit]
+        if a_payment != "All":
+            filtered = filtered[filtered["Payment Status"] == a_payment]
+
+        st.caption(f"Showing {len(filtered)} of {len(df_all)} records")
+        st.dataframe(filtered, use_container_width=True, height=300)
+
+        # ── EDIT / DELETE ─────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### ✏️ Edit or Delete a Record")
+
+        if not filtered.empty:
+            rec_opts = {
+                f"{r['Order ID']} — {r['Name']} ({r.get('Date Created','')})": idx
+                for idx, r in filtered.iterrows()
+            }
+            sel_label = st.selectbox("Select record", list(rec_opts.keys()))
+            sel_idx   = rec_opts[sel_label]
+            sel_row   = df_all.loc[sel_idx]
+
+            ec1, ec2 = st.columns(2)
+
+            with ec1:
+                with st.expander("✏️ Edit"):
+                    outfit_list   = ["Agbada", "Senator", "Suit", "Native", "Kaftan"]
+                    delivery_list = ["Pending", "In Progress", "Ready", "Delivered"]
+                    payment_list  = ["Not Paid", "Part Payment", "Fully Paid"]
+
+                    def safe_index(lst, val, default=0):
+                        return lst.index(val) if val in lst else default
+
+                    with st.form("edit_form"):
+                        e_name     = st.text_input("Name",   value=str(sel_row.get("Name", "")))
+                        e_phone    = st.text_input("Phone",  value=str(sel_row.get("Phone", "")))
+                        e_outfit   = st.selectbox("Outfit Type", outfit_list,
+                                                  index=safe_index(outfit_list, sel_row.get("Outfit Type", "")))
+                        e_delivery_status = st.selectbox("Delivery Status", delivery_list,
+                                                  index=safe_index(delivery_list, sel_row.get("Delivery Status", "")))
+                        e_payment  = st.selectbox("Payment Status", payment_list,
+                                                  index=safe_index(payment_list, sel_row.get("Payment Status", "")))
+                        e_amount   = st.number_input("Amount Paid (₦)",
+                                                     value=float(sel_row.get("Amount Paid") or 0),
+                                                     min_value=0.0, step=1000.0)
+                        e_notes    = st.text_area("Notes", value=str(sel_row.get("Customer Notes", "")))
+                        save_edit  = st.form_submit_button("💾 Save Changes")
+
+                    if save_edit:
+                        update_record(sel_idx, {
+                            "Name":            e_name,
+                            "Phone":           e_phone,
+                            "Outfit Type":     e_outfit,
+                            "Delivery Status": e_delivery_status,
+                            "Payment Status":  e_payment,
+                            "Amount Paid":     e_amount,
+                            "Customer Notes":  e_notes,
+                        })
+                        st.success("Record updated.")
+                        st.rerun()
+
+            with ec2:
+                with st.expander("🗑️ Delete"):
+                    st.warning(f"Delete **{sel_row.get('Name', '')}** ({sel_row.get('Order ID', '')})?")
+                    confirm = st.text_input("Type the customer name to confirm")
+                    if st.button("🗑️ Confirm Delete", type="primary"):
+                        if confirm.strip().lower() == str(sel_row.get("Name", "")).strip().lower():
+                            delete_record(sel_idx)
+                            st.success("Record deleted.")
+                            st.rerun()
+                        else:
+                            st.error("Name does not match.")
+
+        # ── PDF RECEIPT ───────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 🧾 Generate PDF Receipt")
+        if not filtered.empty:
+            pdf_opts = {
+                f"{r['Order ID']} — {r['Name']}": idx
+                for idx, r in filtered.iterrows()
+            }
+            pdf_label = st.selectbox("Select customer", list(pdf_opts.keys()), key="pdf_sel")
+            pdf_row   = df_all.loc[pdf_opts[pdf_label]].to_dict()
+            pdf_bytes = generate_pdf_receipt(pdf_row)
+            st.download_button(
+                "📄 Download PDF Receipt",
+                data=pdf_bytes,
+                file_name=f"receipt_{pdf_row.get('Order ID','order')}.pdf",
+                mime="application/pdf"
+            )
+
+        # ── EXPORTS ───────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 📥 Export Records")
+        ex1, ex2 = st.columns(2)
+        with ex1:
+            st.download_button(
+                "⬇️ Download CSV",
+                data=filtered.to_csv(index=False),
+                file_name="NE_Clothiers_measurements.csv",
+                mime="text/csv"
+            )
+        with ex2:
+            xls = io.BytesIO()
+            filtered.to_excel(xls, index=False, engine="openpyxl")
+            st.download_button(
+                "⬇️ Download Excel",
+                data=xls.getvalue(),
+                file_name="NE_Clothiers_measurements.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 # ════════════════════════════════════════════════════════════
 # PAGE: NEW MEASUREMENT
@@ -385,6 +519,17 @@ elif page == "📋 New Measurement":
                 ["Agbada", "Senator", "Suit", "Native", "Kaftan"]
             )
             unit = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
+            st.markdown("---")
+            st.markdown("**Design / Style Photo**")
+            st.caption("Upload a photo of the design or style the customer wants.")
+            design_photo = st.file_uploader(
+                "Upload design photo",
+                type=["png", "jpg", "jpeg"],
+                label_visibility="collapsed",
+                key="design_photo"
+            )
+            if design_photo:
+                st.image(design_photo, caption="Design Preview", width=200)
 
         with col2:
             st.markdown("#### Body Measurements")
@@ -423,6 +568,13 @@ elif page == "📋 New Measurement":
                     st.error(e)
             else:
                 order_id = generate_order_id()
+
+                design_filename = ""
+                if design_photo is not None:
+                    design_filename = design_photo.name
+                    with open(os.path.join(IMAGE_FOLDER, design_filename), "wb") as f:
+                        f.write(design_photo.getbuffer())
+
                 data = {
                     "Order ID":               order_id,
                     "Name":                   name.strip(),
@@ -435,7 +587,7 @@ elif page == "📋 New Measurement":
                     "Payment Status":         "Not Paid",
                     "Amount Paid":            0,
                     "Receipt File":           "",
-                    "Design Photo":           "",
+                    "Design Photo":           design_filename,
                     "Customer Notes":         "",
                     **meas_values
                 }
@@ -576,18 +728,10 @@ elif page == "🔍 Order Tracking":
 
         with od_col2:
             st.markdown("**Payment Receipt**")
-            od_receipt      = st.file_uploader("Upload receipt",
-                                               type=["png", "jpg", "jpeg", "pdf"],
-                                               label_visibility="collapsed",
-                                               key="od_receipt")
-            st.markdown("**Design / Style Photo**")
-            st.caption("Upload a photo of the design or style you want.")
-            od_design       = st.file_uploader("Upload design photo",
-                                               type=["png", "jpg", "jpeg"],
-                                               label_visibility="collapsed",
-                                               key="od_design")
-            if od_design:
-                st.image(od_design, caption="Design Preview", use_container_width=True)
+            od_receipt = st.file_uploader("Upload receipt",
+                                          type=["png", "jpg", "jpeg", "pdf"],
+                                          label_visibility="collapsed",
+                                          key="od_receipt")
 
         od_submit = st.form_submit_button("📤 Submit Order Details", use_container_width=True)
 
@@ -606,17 +750,11 @@ elif page == "🔍 Order Tracking":
                     record_idx = match.index[0]
 
                     receipt_filename = str(df_check.at[record_idx, "Receipt File"] or "")
-                    design_filename  = str(df_check.at[record_idx, "Design Photo"] or "")
 
                     if od_receipt is not None:
                         receipt_filename = od_receipt.name
                         with open(os.path.join(RECEIPT_FOLDER, receipt_filename), "wb") as f:
                             f.write(od_receipt.getbuffer())
-
-                    if od_design is not None:
-                        design_filename = od_design.name
-                        with open(os.path.join(IMAGE_FOLDER, design_filename), "wb") as f:
-                            f.write(od_design.getbuffer())
 
                     update_record(record_idx, {
                         "Expected Delivery Date": str(od_delivery),
@@ -624,7 +762,6 @@ elif page == "🔍 Order Tracking":
                         "Amount Paid":            od_amount,
                         "Customer Notes":         od_notes,
                         "Receipt File":           receipt_filename,
-                        "Design Photo":           design_filename,
                     })
 
                     st.success(f"✅ Order details updated for **{od_order_id.strip().upper()}**!")

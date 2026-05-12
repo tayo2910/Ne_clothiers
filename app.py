@@ -195,7 +195,7 @@ h1, h2, h3, h4 {{
     font-weight: 850;
     color: white;
     margin-top: 20px;
-    margin-bottom: 
+    margin-bottom: 4px;
     letter-spacing: 3px;
     text-align: center;
     white-space: nowrap;
@@ -263,18 +263,31 @@ with st.sidebar:
         st.image("ne.png", width=110)
     st.title("NE Clothiers")
     st.markdown("---")
-    page = st.radio("Navigate", ["📊 Dashboard", "📋 New Measurement", "🗂️ Customer Records"])
+
+    # Build nav options — Dashboard only visible to logged-in admins
+    nav_options = ["📋 New Measurement", "🔍 Order Tracking", "🗂️ Customer Records"]
+    if st.session_state.logged_in:
+        nav_options = ["📊 Dashboard"] + nav_options
+
+    page = st.radio("Navigate", nav_options)
     st.markdown("---")
+
     if st.session_state.logged_in:
         st.success("Admin logged in")
         if st.button("🚪 Logout"):
             st.session_state.logged_in = False
             st.rerun()
+    else:
+        st.caption("🔒 Admin? Log in via Customer Records.")
 
 # ════════════════════════════════════════════════════════════
-# PAGE: DASHBOARD
+# PAGE: DASHBOARD (admin only)
 # ════════════════════════════════════════════════════════════
 if page == "📊 Dashboard":
+    if not st.session_state.logged_in:
+        st.error("🔒 Access denied. This page is for admins only.")
+        st.stop()
+
     st.subheader("📊 Dashboard")
     df = load_data()
 
@@ -445,6 +458,117 @@ elif page == "📋 New Measurement":
                 )
                 if image_file is not None:
                     st.image(image_file, caption="Customer Photo", width=220)
+
+# ════════════════════════════════════════════════════════════
+# PAGE: ORDER TRACKING (public)
+# ════════════════════════════════════════════════════════════
+elif page == "🔍 Order Tracking":
+    st.subheader("🔍 Track Your Order")
+    st.markdown("Enter your name or phone number to check the status of your order.")
+
+    df = load_data()
+
+    search_query = st.text_input(
+        "Your Name or Phone Number",
+        placeholder="e.g. John Doe or 08012345678"
+    )
+
+    if search_query.strip():
+        mask = (
+            df["Name"].astype(str).str.lower().str.contains(search_query.strip().lower(), na=False) |
+            df["Phone"].astype(str).str.lower().str.contains(search_query.strip().lower(), na=False)
+        )
+        results = df[mask]
+
+        if results.empty:
+            st.warning("No orders found. Please check your name or phone number and try again.")
+        else:
+            st.success(f"Found {len(results)} order(s) for **{search_query}**")
+
+            for _, row in results.iterrows():
+                delivery_status = str(row.get("Delivery Status", "Pending"))
+
+                # Status colour and icon
+                status_style = {
+                    "Pending":     ("🕐", "#F59E0B", "#1C1400"),
+                    "In Progress": ("🔧", "#3B82F6", "#0A1628"),
+                    "Ready":       ("✅", "#10B981", "#021A0E"),
+                    "Delivered":   ("📦", "#6B7280", "#111827"),
+                }.get(delivery_status, ("🕐", "#F59E0B", "#1C1400"))
+
+                icon, badge_color, badge_bg = status_style
+
+                st.markdown(f"""
+                <div style="
+                    background-color: #1E3A6E;
+                    border-radius: 14px;
+                    padding: 20px 24px;
+                    margin-bottom: 16px;
+                    border-left: 5px solid {badge_color};
+                ">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <h3 style="color:white; margin:0 0 4px 0;">{row.get("Name", "")}</h3>
+                            <p style="color:#93C5FD; margin:0; font-size:14px;">
+                                📱 {row.get("Phone", "—")} &nbsp;|&nbsp;
+                                👔 {row.get("Outfit Type", "—")} &nbsp;|&nbsp;
+                                📅 Order date: {row.get("Date Created", "—")}
+                            </p>
+                        </div>
+                        <div style="
+                            background-color: {badge_bg};
+                            border: 2px solid {badge_color};
+                            border-radius: 20px;
+                            padding: 6px 16px;
+                            font-weight: bold;
+                            color: {badge_color};
+                            font-size: 15px;
+                            white-space: nowrap;
+                        ">
+                            {icon} {delivery_status}
+                        </div>
+                    </div>
+                    <hr style="border-color:#2563EB44; margin: 14px 0;">
+                    <div style="display:flex; gap:40px; flex-wrap:wrap;">
+                        <div>
+                            <p style="color:#94A3B8; margin:0; font-size:12px;">EXPECTED DELIVERY</p>
+                            <p style="color:white; margin:0; font-size:15px; font-weight:600;">
+                                📆 {row.get("Expected Delivery Date", "—")}
+                            </p>
+                        </div>
+                        <div>
+                            <p style="color:#94A3B8; margin:0; font-size:12px;">PAYMENT STATUS</p>
+                            <p style="color:white; margin:0; font-size:15px; font-weight:600;">
+                                💳 {row.get("Payment Status", "—")}
+                            </p>
+                        </div>
+                        <div>
+                            <p style="color:#94A3B8; margin:0; font-size:12px;">AMOUNT PAID</p>
+                            <p style="color:white; margin:0; font-size:15px; font-weight:600;">
+                                ₦{float(row.get("Amount Paid") or 0):,.0f}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    else:
+        # Show a friendly prompt when nothing is typed yet
+        st.markdown("""
+        <div style="
+            background-color: #1E3A6E;
+            border-radius: 14px;
+            padding: 30px;
+            text-align: center;
+            margin-top: 20px;
+        ">
+            <p style="font-size: 48px; margin: 0;">✂️</p>
+            <h3 style="color: white; margin: 10px 0 6px 0;">NE Clothiers Order Tracker</h3>
+            <p style="color: #93C5FD; margin: 0;">
+                Type your name or phone number above to see your order status.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════
 # PAGE: CUSTOMER RECORDS

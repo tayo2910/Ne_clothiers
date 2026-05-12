@@ -528,21 +528,7 @@ if page == "🔐 Admin":
 # PAGE: NEW MEASUREMENT
 # ════════════════════════════════════════════════════════════
 elif page == "📋 New Measurement":
-    st.subheader("📋 Add New Customer Measurement")
-
-    # Outfit selector and image preview are OUTSIDE the form so the image
-    # updates immediately when the dropdown changes (forms only re-run on submit).
-    _oc1, _oc2 = st.columns([1, 1])
-    with _oc1:
-        outfit = st.selectbox(
-            "Outfit Type",
-            ["Agbada", "Senator", "Suit", "Kaftan"],
-            key="outfit_select"
-        )
-    with _oc2:
-        _img_path = OUTFIT_IMAGES.get(outfit)
-        if _img_path and os.path.exists(_img_path):
-            st.image(_img_path, caption=f"{outfit} Style", use_container_width=True)
+    st.subheader("Let's Serve You")
 
     with st.form("measurement_form", clear_on_submit=True):
         col1, col2 = st.columns([1, 1])
@@ -551,8 +537,8 @@ elif page == "📋 New Measurement":
             st.markdown("#### Customer Info")
             name  = st.text_input("Customer Name *")
             phone = st.text_input("Phone Number")
-            # Outfit already selected above — show it as a label inside the form
-            st.markdown(f"**Outfit:** {outfit}")
+            # Outfit is selected below the form; read from session_state
+            st.markdown(f"**Outfit:** {st.session_state.get('outfit_select', 'Agbada')}")
             unit = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
             st.markdown("---")
             st.markdown("**Design / Style Photo**")
@@ -588,50 +574,66 @@ elif page == "📋 New Measurement":
 
         submitted = st.form_submit_button("💾 Save Measurement", use_container_width=True)
 
-        if submitted:
-            errors = []
-            if not name.strip():
-                errors.append("Customer name is required.")
-            if phone and not validate_phone(phone):
-                errors.append("Phone number format is invalid.")
-            for field, val in meas_values.items():
-                if val and not val.replace('.', '', 1).isdigit():
-                    errors.append(f"{field} must be a number (e.g. 42 or 42.5).")
+    # ── OUTFIT SELECTOR + PREVIEW (outside form so image swaps on change) ──
+    st.markdown("---")
+    st.markdown("#### 👔 Select Outfit Type")
+    _oc1, _oc2 = st.columns([1, 1])
+    with _oc1:
+        outfit = st.selectbox(
+            "Outfit Type",
+            ["Agbada", "Senator", "Suit", "Kaftan"],
+            key="outfit_select"
+        )
+    with _oc2:
+        _img_path = OUTFIT_IMAGES.get(outfit)
+        if _img_path and os.path.exists(_img_path):
+            st.image(_img_path, caption=f"{outfit} Style", use_container_width=True)
 
-            if errors:
-                for e in errors:
-                    st.error(e)
-            else:
-                order_id = generate_order_id()
+    if submitted:
+        errors = []
+        if not name.strip():
+            errors.append("Customer name is required.")
+        if phone and not validate_phone(phone):
+            errors.append("Phone number format is invalid.")
+        for field, val in meas_values.items():
+            if val and not val.replace('.', '', 1).isdigit():
+                errors.append(f"{field} must be a number (e.g. 42 or 42.5).")
 
-                design_filename = ""
-                if design_photo is not None:
-                    design_filename = design_photo.name
-                    with open(os.path.join(IMAGE_FOLDER, design_filename), "wb") as f:
-                        f.write(design_photo.getbuffer())
+        if errors:
+            for e in errors:
+                st.error(e)
+        else:
+            order_id = generate_order_id()
+            outfit_saved = st.session_state.get("outfit_select", "Agbada")
 
-                data = {
-                    "Order ID":               order_id,
-                    "Name":                   name.strip(),
-                    "Phone":                  phone,
-                    "Outfit Type":            outfit,
-                    "Unit":                   unit,
-                    "Date Created":           datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Expected Delivery Date": "",
-                    "Delivery Status":        "Pending",
-                    "Payment Status":         "Not Paid",
-                    "Amount Paid":            0,
-                    "Receipt File":           "",
-                    "Design Photo":           design_filename,
-                    "Customer Notes":         "",
-                    **meas_values
-                }
+            design_filename = ""
+            if design_photo is not None:
+                design_filename = design_photo.name
+                with open(os.path.join(IMAGE_FOLDER, design_filename), "wb") as f:
+                    f.write(design_photo.getbuffer())
 
-                save_data(data)
-                st.session_state.pending_order_id = order_id
-                st.session_state.just_saved_order = True
-                st.success(f"✅ Measurement saved! Order ID: **{order_id}**")
-                st.info(f"**{name.strip()}** | {outfit}")
+            data = {
+                "Order ID":               order_id,
+                "Name":                   name.strip(),
+                "Phone":                  phone,
+                "Outfit Type":            outfit_saved,
+                "Unit":                   unit,
+                "Date Created":           datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "Expected Delivery Date": "",
+                "Delivery Status":        "Pending",
+                "Payment Status":         "Not Paid",
+                "Amount Paid":            0,
+                "Receipt File":           "",
+                "Design Photo":           design_filename,
+                "Customer Notes":         "",
+                **meas_values
+            }
+
+            save_data(data)
+            st.session_state.pending_order_id = order_id
+            st.session_state.just_saved_order = True
+            st.success(f"✅ Measurement saved! Order ID: **{order_id}**")
+            st.info(f"**{name.strip()}** | {outfit_saved}")
 
 # Show "Continue" button outside the form, after a successful save
 if st.session_state.just_saved_order:

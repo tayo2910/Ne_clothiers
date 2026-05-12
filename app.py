@@ -199,25 +199,7 @@ st.markdown(f"""
 }}
 h1, h2, h3, h4 {{
     color: white;
-}}
-.main-title {{
-    font-size: clamp(22px, 4vw, 42px);
-    font-weight: 850;
-    color: white;
-    margin-top: 10px;
-    margin-bottom: 4px;
-    letter-spacing: 2px;
     text-align: center;
-    white-space: normal;
-    word-break: break-word;
-    line-height: 1.2;
-}}
-.sub-title {{
-    font-size: 18px;
-    color: #93C5FD;
-    text-align: center;
-    margin-bottom: 30px;
-    letter-spacing: 1px;
 }}
 [data-testid="stForm"] {{
     background-color: {CARD_COLOR};
@@ -283,8 +265,11 @@ div[data-testid="stSidebarContent"] {{
 """, unsafe_allow_html=True)
 
 # ── HEADER ───────────────────────────────────────────────────
-st.markdown('<p class="main-title">✂️ NE CLOTHIERS</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Premium Tailoring Measurement System</p>', unsafe_allow_html=True)
+st.title("✂️ NE CLOTHIERS")
+st.markdown(
+    "<p style='color:#93C5FD; text-align:center; font-size:16px; margin-top:-15px; letter-spacing:1px;'>Premium Tailoring Measurement System</p>",
+    unsafe_allow_html=True
+)
 
 # ── SIDEBAR ──────────────────────────────────────────────────
 with st.sidebar:

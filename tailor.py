@@ -299,7 +299,7 @@ tk.Label(form_outer, text="Outfit Type:", bg=CARD_COLOR, fg=TEXT_COLOR,
          font=("Segoe UI", 9, "bold")).grid(row=5, column=0, sticky="w", pady=2)
 outfit_var = tk.StringVar(value="Agbada")
 outfit_cb  = ttk.Combobox(form_outer, textvariable=outfit_var, width=16,
-                           values=["Agbada", "Senator", "Suit", "Native", "Kaftan"],
+                           values=["Agbada", "Senator", "Suit", "Kaftan"],
                            state="readonly")
 outfit_cb.grid(row=5, column=1, sticky="w", pady=2)
 

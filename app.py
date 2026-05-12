@@ -6,6 +6,11 @@ import os
 import io
 import re
 import uuid
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import encoders
 from datetime import datetime, date
 
 import pandas as pd
@@ -31,6 +36,15 @@ TEXT_COLOR    = "#FFFFFF"
 FILE_NAME      = "NE_Clothiers_measurements.csv"
 IMAGE_FOLDER   = "customer_images"
 RECEIPT_FOLDER = "receipts"
+OUTFIT_FOLDER  = "outfit_images"
+
+# Map outfit types to their preview images
+OUTFIT_IMAGES = {
+    "Agbada":  os.path.join(OUTFIT_FOLDER, "agbada.avif"),
+    "Senator": os.path.join(OUTFIT_FOLDER, "senator.jpg"),
+    "Suit":    os.path.join(OUTFIT_FOLDER, "suit.avif"),
+    "Kaftan":  os.path.join(OUTFIT_FOLDER, "kaftan.jpg"),
+}
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "nedee123")
@@ -527,6 +541,10 @@ elif page == "📋 New Measurement":
                 "Outfit Type",
                 ["Agbada", "Senator", "Suit", "Kaftan"]
             )
+            # Show outfit preview image
+            outfit_img_path = OUTFIT_IMAGES.get(outfit)
+            if outfit_img_path and os.path.exists(outfit_img_path):
+                st.image(outfit_img_path, caption=f"{outfit} Style", use_container_width=True)
             unit = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
             st.markdown("---")
             st.markdown("**Design / Style Photo**")

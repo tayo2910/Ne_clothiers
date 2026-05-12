@@ -530,16 +530,30 @@ if page == "🔐 Admin":
 elif page == "📋 New Measurement":
     st.subheader("Let's Serve You")
 
-    with st.form("measurement_form", clear_on_submit=True):
-        col1, col2 = st.columns([1, 1])
+    # Columns are defined OUTSIDE both form and selector so everything
+    # sits side-by-side in one unified layout.
+    col1, col2 = st.columns([1, 1])
 
-        with col1:
+    # ── LEFT COLUMN: outfit selector (live) + customer info form ──
+    with col1:
+        st.markdown("#### 👔 Outfit Type")
+        outfit = st.selectbox(
+            "Outfit Type",
+            ["Agbada", "Senator", "Suit", "Kaftan"],
+            key="outfit_select",
+            label_visibility="collapsed"
+        )
+        _img_path = OUTFIT_IMAGES.get(outfit)
+        if _img_path and os.path.exists(_img_path):
+            st.image(_img_path, caption=f"{outfit} Style", use_container_width=True)
+
+        st.markdown("---")
+
+        with st.form("measurement_form", clear_on_submit=True):
             st.markdown("#### Customer Info")
             name  = st.text_input("Customer Name *")
             phone = st.text_input("Phone Number")
-            # Outfit is selected below the form; read from session_state
-            st.markdown(f"**Outfit:** {st.session_state.get('outfit_select', 'Agbada')}")
-            unit = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
+            unit  = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
             st.markdown("---")
             st.markdown("**Design / Style Photo**")
             st.caption("Upload a photo of the design or style the customer wants.")
@@ -552,42 +566,28 @@ elif page == "📋 New Measurement":
             if design_photo:
                 st.image(design_photo, caption="Design Preview", width=200)
 
-        with col2:
-            st.markdown("#### Body Measurements")
-            meas_values = {}
+            submitted = st.form_submit_button("💾 Save Measurement", use_container_width=True)
 
-            with st.expander("👕 Upper Body", expanded=True):
-                for field in UPPER_BODY:
-                    meas_values[field] = st.text_input(
-                        field,
-                        placeholder=f"Enter {field.lower()}",
-                        key=f"meas_{field}"
-                    )
+    # ── RIGHT COLUMN: body measurements (inside same outer column) ──
+    with col2:
+        st.markdown("#### Body Measurements")
+        meas_values = {}
 
-            with st.expander("👖 Lower Body", expanded=True):
-                for field in LOWER_BODY:
-                    meas_values[field] = st.text_input(
-                        field,
-                        placeholder=f"Enter {field.lower()}",
-                        key=f"meas_{field}"
-                    )
+        with st.expander("👕 Upper Body", expanded=True):
+            for field in UPPER_BODY:
+                meas_values[field] = st.text_input(
+                    field,
+                    placeholder=f"Enter {field.lower()}",
+                    key=f"meas_{field}"
+                )
 
-        submitted = st.form_submit_button("💾 Save Measurement", use_container_width=True)
-
-    # ── OUTFIT SELECTOR + PREVIEW (outside form so image swaps on change) ──
-    st.markdown("---")
-    st.markdown("#### 👔 Select Outfit Type")
-    _oc1, _oc2 = st.columns([1, 1])
-    with _oc1:
-        outfit = st.selectbox(
-            "Outfit Type",
-            ["Agbada", "Senator", "Suit", "Kaftan"],
-            key="outfit_select"
-        )
-    with _oc2:
-        _img_path = OUTFIT_IMAGES.get(outfit)
-        if _img_path and os.path.exists(_img_path):
-            st.image(_img_path, caption=f"{outfit} Style", use_container_width=True)
+        with st.expander("👖 Lower Body", expanded=True):
+            for field in LOWER_BODY:
+                meas_values[field] = st.text_input(
+                    field,
+                    placeholder=f"Enter {field.lower()}",
+                    key=f"meas_{field}"
+                )
 
     if submitted:
         errors = []
@@ -603,7 +603,7 @@ elif page == "📋 New Measurement":
             for e in errors:
                 st.error(e)
         else:
-            order_id = generate_order_id()
+            order_id     = generate_order_id()
             outfit_saved = st.session_state.get("outfit_select", "Agbada")
 
             design_filename = ""

@@ -530,6 +530,20 @@ if page == "🔐 Admin":
 elif page == "📋 New Measurement":
     st.subheader("📋 Add New Customer Measurement")
 
+    # Outfit selector and image preview are OUTSIDE the form so the image
+    # updates immediately when the dropdown changes (forms only re-run on submit).
+    _oc1, _oc2 = st.columns([1, 1])
+    with _oc1:
+        outfit = st.selectbox(
+            "Outfit Type",
+            ["Agbada", "Senator", "Suit", "Kaftan"],
+            key="outfit_select"
+        )
+    with _oc2:
+        _img_path = OUTFIT_IMAGES.get(outfit)
+        if _img_path and os.path.exists(_img_path):
+            st.image(_img_path, caption=f"{outfit} Style", use_container_width=True)
+
     with st.form("measurement_form", clear_on_submit=True):
         col1, col2 = st.columns([1, 1])
 
@@ -537,14 +551,8 @@ elif page == "📋 New Measurement":
             st.markdown("#### Customer Info")
             name  = st.text_input("Customer Name *")
             phone = st.text_input("Phone Number")
-            outfit = st.selectbox(
-                "Outfit Type",
-                ["Agbada", "Senator", "Suit", "Kaftan"]
-            )
-            # Show outfit preview image
-            outfit_img_path = OUTFIT_IMAGES.get(outfit)
-            if outfit_img_path and os.path.exists(outfit_img_path):
-                st.image(outfit_img_path, caption=f"{outfit} Style", use_container_width=True)
+            # Outfit already selected above — show it as a label inside the form
+            st.markdown(f"**Outfit:** {outfit}")
             unit = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
             st.markdown("---")
             st.markdown("**Design / Style Photo**")

@@ -201,14 +201,16 @@ h1, h2, h3, h4 {{
     color: white;
 }}
 .main-title {{
-    font-size: 42px;
+    font-size: clamp(22px, 4vw, 42px);
     font-weight: 850;
     color: white;
-    margin-top: 20px;
+    margin-top: 10px;
     margin-bottom: 4px;
-    letter-spacing: 3px;
+    letter-spacing: 2px;
     text-align: center;
-    white-space: nowrap;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.2;
 }}
 .sub-title {{
     font-size: 18px;

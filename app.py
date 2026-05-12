@@ -193,9 +193,6 @@ st.markdown(f"""
 .stApp {{
     background-color: {BG_COLOR};
 }}
-.block-container {{
-    padding-top: 6rem;
-}}
 h1, h2, h3, h4 {{
     color: white;
 }}
@@ -218,17 +215,34 @@ h1, h2, h3, h4 {{
 }}
 [data-testid="stForm"] {{
     background-color: {CARD_COLOR};
-    padding: 25px;
+    padding: 16px 20px;
     border-radius: 16px;
     border: 1px solid #2563EB33;
 }}
-.stTextInput input,
-.stNumberInput input,
-.stDateInput input {{
-    background-color: #1E3A6E;
-    color: white;
-    border-radius: 8px;
-    border: 1px solid #2563EB55;
+/* Tighten vertical spacing inside forms */
+[data-testid="stForm"] .stTextInput,
+[data-testid="stForm"] .stNumberInput,
+[data-testid="stForm"] .stSelectbox,
+[data-testid="stForm"] .stRadio,
+[data-testid="stForm"] .stFileUploader,
+[data-testid="stForm"] .stTextArea {{
+    margin-bottom: 0px !important;
+}}
+[data-testid="stForm"] .stTextInput > div,
+[data-testid="stForm"] .stNumberInput > div,
+[data-testid="stForm"] .stSelectbox > div {{
+    margin-bottom: 0px !important;
+}}
+/* Tighten expander padding */
+[data-testid="stExpander"] > div:first-child {{
+    padding: 6px 12px !important;
+}}
+[data-testid="stExpander"] details summary {{
+    padding: 6px 0 !important;
+}}
+.block-container {{
+    padding-top: 2rem;
+    padding-bottom: 1rem;
 }}
 .stSelectbox > div,
 .stRadio > div {{
@@ -286,7 +300,7 @@ with st.sidebar:
 # ════════════════════════════════════════════════════════════
 # PAGE: ADMIN (login-gated — dashboard lives here)
 # ════════════════════════════════════════════════════════════
-if page == "� Admin":
+if page == "🔐 Admin":
     if not st.session_state.logged_in:
         # Show a plain login form — no mention of "admin" or "dashboard"
         st.markdown(
@@ -618,6 +632,7 @@ elif page == "🔍 Order Tracking":
         search_btn = st.button("🔍 Search", use_container_width=True)
 
     results = pd.DataFrame()
+    found_order_id = ""
 
     if search_query.strip():
         q = search_query.strip().lower()
@@ -632,6 +647,8 @@ elif page == "🔍 Order Tracking":
             st.warning("No orders found. Check your Order ID, name, or phone number and try again.")
         else:
             st.success(f"Found {len(results)} order(s)")
+            # Use the first match's Order ID to pre-fill the details form
+            found_order_id = str(results.iloc[0].get("Order ID", ""))
 
             for row_idx, row in results.iterrows():
                 delivery_status = str(row.get("Delivery Status", "Pending"))
@@ -711,20 +728,35 @@ elif page == "🔍 Order Tracking":
     st.markdown("### 📝 Submit Order Details")
     st.markdown(
         "Already have an Order ID? Use this form to add your delivery date, "
-        "payment info, design photo, and notes."
+        "payment info, and notes."
     )
+
+    # Pre-fill values from search result if available
+    prefill_row = results.iloc[0] if not results.empty else None
+    default_order_id  = found_order_id
+    default_payment   = str(prefill_row.get("Payment Status", "Not Paid")) if prefill_row is not None else "Not Paid"
+    default_amount    = float(prefill_row.get("Amount Paid") or 0) if prefill_row is not None else 0.0
+    default_notes     = str(prefill_row.get("Customer Notes", "") or "") if prefill_row is not None else ""
+    payment_list      = ["Not Paid", "Part Payment", "Fully Paid"]
+    default_pay_idx   = payment_list.index(default_payment) if default_payment in payment_list else 0
 
     with st.form("order_details_form", clear_on_submit=True):
         od_col1, od_col2 = st.columns([1, 1])
 
         with od_col1:
-            od_order_id     = st.text_input("Order ID *", placeholder="e.g. NEC-2026-A3F7")
-            od_delivery     = st.date_input("Expected Delivery Date")
-            od_payment      = st.selectbox("Payment Status",
-                                           ["Not Paid", "Part Payment", "Fully Paid"])
-            od_amount       = st.number_input("Amount Paid (₦)", min_value=0.0, step=1000.0)
-            od_notes        = st.text_area("Customer Notes",
-                                           placeholder="Special instructions, style preferences...")
+            od_order_id = st.text_input(
+                "Order ID *",
+                value=default_order_id,
+                placeholder="e.g. NEC-2026-A3F7"
+            )
+            od_delivery = st.date_input("Expected Delivery Date")
+            od_payment  = st.selectbox("Payment Status", payment_list, index=default_pay_idx)
+            od_amount   = st.number_input("Amount Paid (₦)",
+                                          value=default_amount,
+                                          min_value=0.0, step=1000.0)
+            od_notes    = st.text_area("Customer Notes",
+                                       value=default_notes,
+                                       placeholder="Special instructions, style preferences...")
 
         with od_col2:
             st.markdown("**Payment Receipt**")

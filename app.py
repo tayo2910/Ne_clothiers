@@ -424,7 +424,7 @@ if page == "🔐 Admin":
 
             with ec1:
                 with st.expander("✏️ Edit"):
-                    outfit_list   = ["Agbada", "Senator", "Suit", "Native", "Kaftan"]
+                    outfit_list   = ["Agbada", "Senator", "Suit", "Kaftan"]
                     delivery_list = ["Pending", "In Progress", "Ready", "Delivered"]
                     payment_list  = ["Not Paid", "Part Payment", "Fully Paid"]
 
@@ -525,7 +525,7 @@ elif page == "📋 New Measurement":
             phone = st.text_input("Phone Number")
             outfit = st.selectbox(
                 "Outfit Type",
-                ["Agbada", "Senator", "Suit", "Native", "Kaftan"]
+                ["Agbada", "Senator", "Suit", "Kaftan"]
             )
             unit = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
             st.markdown("---")

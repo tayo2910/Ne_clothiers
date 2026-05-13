@@ -54,7 +54,7 @@ os.makedirs(RECEIPT_FOLDER, exist_ok=True)
 
 # ── FIELDS ───────────────────────────────────────────────────
 FIELDS = [
-    "Order ID", "Name", "Phone", "Outfit Type", "Unit",
+    "Order ID", "Name", "Phone", "Email", "Outfit Type", "Unit",
     "Date Created", "Expected Delivery Date",
     "Payment Status", "Amount Paid",
     "Receipt File", "Design Photo", "Customer Notes",
@@ -197,7 +197,75 @@ def generate_pdf_receipt(record: dict) -> bytes:
     return bytes(pdf.output())
 
 
-# ── SESSION STATE DEFAULTS ────────────────────────────────────
+def validate_email(email: str) -> bool:
+    return bool(re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email)) if email else False
+
+
+def send_order_confirmation_email(record: dict) -> tuple[bool, str]:
+    """Send order confirmation with PDF receipt to the customer's email."""
+    sender   = os.getenv("EMAIL_SENDER", "")
+    password = os.getenv("EMAIL_PASSWORD", "")
+    host     = os.getenv("EMAIL_SMTP_HOST", "smtp.gmail.com")
+    port     = int(os.getenv("EMAIL_SMTP_PORT", 587))
+
+    if not sender or not password:
+        return False, "Email credentials not configured in .env (EMAIL_SENDER / EMAIL_PASSWORD)."
+
+    recipient = record.get("Email", "")
+    if not recipient:
+        return False, "No customer email address on record."
+
+    try:
+        pdf_bytes = generate_pdf_receipt(record)
+
+        msg = MIMEMultipart()
+        msg["From"]    = sender
+        msg["To"]      = recipient
+        msg["Subject"] = f"NE Clothiers — Order Confirmation {record.get('Order ID', '')}"
+
+        body = f"""
+Dear {record.get('Name', 'Customer')},
+
+Thank you for choosing NE Clothiers! Your measurement has been recorded successfully.
+
+Order Details:
+  Order ID   : {record.get('Order ID', '—')}
+  Outfit     : {record.get('Outfit Type', '—')}
+  Unit       : {record.get('Unit', '—')}
+  Date       : {record.get('Date Created', '—')}
+
+Please find your full measurement receipt attached as a PDF.
+Keep your Order ID handy — you can use it to track your order status at any time.
+
+Warm regards,
+NE Clothiers Team
+        """.strip()
+
+        msg.attach(MIMEText(body, "plain"))
+
+        # Attach PDF receipt
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(pdf_bytes)
+        encoders.encode_base64(part)
+        part.add_header(
+            "Content-Disposition",
+            f"attachment; filename=receipt_{record.get('Order ID', 'order')}.pdf"
+        )
+        msg.attach(part)
+
+        with smtplib.SMTP(host, port) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(sender, password)
+            server.sendmail(sender, recipient, msg.as_string())
+
+        return True, f"Confirmation sent to {recipient}"
+
+    except Exception as e:
+        return False, str(e)
+
+
+
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "pending_order_id" not in st.session_state:
@@ -545,14 +613,15 @@ elif page == "📋 New Measurement":
         )
         _img_path = OUTFIT_IMAGES.get(outfit)
         if _img_path and os.path.exists(_img_path):
-            st.image(_img_path, caption=f"{outfit} Style", use_container_width=True)
+            st.image(_img_path, caption=f"{outfit} Style", width=220)
 
         st.markdown("---")
 
         with st.form("measurement_form", clear_on_submit=True):
             st.markdown("#### Customer Info")
             name  = st.text_input("Customer Name *")
-            phone = st.text_input("Phone Number")
+            phone = st.text_input("Phone Number *")
+            email = st.text_input("Email Address *", placeholder="customer@example.com")
             unit  = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True)
             st.markdown("---")
             st.markdown("**Design / Style Photo**")
@@ -564,11 +633,11 @@ elif page == "📋 New Measurement":
                 key="design_photo"
             )
             if design_photo:
-                st.image(design_photo, caption="Design Preview", width=200)
+                st.image(design_photo, caption="Design Preview", width=180)
 
             submitted = st.form_submit_button("💾 Save Measurement", use_container_width=True)
 
-    # ── RIGHT COLUMN: body measurements (inside same outer column) ──
+    # ── RIGHT COLUMN: body measurements ──
     with col2:
         st.markdown("#### Body Measurements")
         meas_values = {}
@@ -576,7 +645,7 @@ elif page == "📋 New Measurement":
         with st.expander("👕 Upper Body", expanded=True):
             for field in UPPER_BODY:
                 meas_values[field] = st.text_input(
-                    field,
+                    f"{field} *",
                     placeholder=f"Enter {field.lower()}",
                     key=f"meas_{field}"
                 )
@@ -584,7 +653,7 @@ elif page == "📋 New Measurement":
         with st.expander("👖 Lower Body", expanded=True):
             for field in LOWER_BODY:
                 meas_values[field] = st.text_input(
-                    field,
+                    f"{field} *",
                     placeholder=f"Enter {field.lower()}",
                     key=f"meas_{field}"
                 )
@@ -593,10 +662,18 @@ elif page == "📋 New Measurement":
         errors = []
         if not name.strip():
             errors.append("Customer name is required.")
-        if phone and not validate_phone(phone):
+        if not phone.strip():
+            errors.append("Phone number is required.")
+        elif not validate_phone(phone):
             errors.append("Phone number format is invalid.")
+        if not email.strip():
+            errors.append("Email address is required.")
+        elif not validate_email(email.strip()):
+            errors.append("Email address format is invalid.")
         for field, val in meas_values.items():
-            if val and not val.replace('.', '', 1).isdigit():
+            if not val.strip():
+                errors.append(f"{field} is required.")
+            elif not val.replace('.', '', 1).isdigit():
                 errors.append(f"{field} must be a number (e.g. 42 or 42.5).")
 
         if errors:
@@ -615,7 +692,8 @@ elif page == "📋 New Measurement":
             data = {
                 "Order ID":               order_id,
                 "Name":                   name.strip(),
-                "Phone":                  phone,
+                "Phone":                  phone.strip(),
+                "Email":                  email.strip(),
                 "Outfit Type":            outfit_saved,
                 "Unit":                   unit,
                 "Date Created":           datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -634,6 +712,13 @@ elif page == "📋 New Measurement":
             st.session_state.just_saved_order = True
             st.success(f"✅ Measurement saved! Order ID: **{order_id}**")
             st.info(f"**{name.strip()}** | {outfit_saved}")
+
+            # Send confirmation email to customer
+            ok, msg = send_order_confirmation_email(data)
+            if ok:
+                st.success(f"📧 {msg}")
+            else:
+                st.warning(f"📧 Email not sent: {msg}")
 
 # Show "Continue" button outside the form, after a successful save
 if st.session_state.just_saved_order:

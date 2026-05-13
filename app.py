@@ -203,15 +203,19 @@ def validate_email(email: str) -> bool:
 
 def send_order_confirmation_email(record: dict) -> tuple[bool, str]:
     """Send order confirmation with PDF receipt to the customer's email."""
-    sender   = os.getenv("EMAIL_SENDER", "")
-    password = os.getenv("EMAIL_PASSWORD", "")
-    host     = os.getenv("EMAIL_SMTP_HOST", "smtp.gmail.com")
+    # Re-load .env each call so credentials are always fresh
+    load_dotenv(override=True)
+
+    sender   = os.getenv("EMAIL_SENDER", "").strip()
+    # Strip spaces from app password — Gmail displays them grouped but SMTP needs them removed
+    password = os.getenv("EMAIL_PASSWORD", "").replace(" ", "")
+    host     = os.getenv("EMAIL_SMTP_HOST", "smtp.gmail.com").strip()
     port     = int(os.getenv("EMAIL_SMTP_PORT", 587))
 
     if not sender or not password:
         return False, "Email credentials not configured in .env (EMAIL_SENDER / EMAIL_PASSWORD)."
 
-    recipient = record.get("Email", "")
+    recipient = record.get("Email", "").strip()
     if not recipient:
         return False, "No customer email address on record."
 
@@ -223,8 +227,7 @@ def send_order_confirmation_email(record: dict) -> tuple[bool, str]:
         msg["To"]      = recipient
         msg["Subject"] = f"NE Clothiers — Order Confirmation {record.get('Order ID', '')}"
 
-        body = f"""
-Dear {record.get('Name', 'Customer')},
+        body = f"""Dear {record.get('Name', 'Customer')},
 
 Thank you for choosing NE Clothiers! Your measurement has been recorded successfully.
 
@@ -238,8 +241,7 @@ Please find your full measurement receipt attached as a PDF.
 Keep your Order ID handy — you can use it to track your order status at any time.
 
 Warm regards,
-NE Clothiers Team
-        """.strip()
+NE Clothiers Team"""
 
         msg.attach(MIMEText(body, "plain"))
 
@@ -253,16 +255,21 @@ NE Clothiers Team
         )
         msg.attach(part)
 
-        with smtplib.SMTP(host, port) as server:
+        with smtplib.SMTP(host, port, timeout=15) as server:
             server.ehlo()
             server.starttls()
+            server.ehlo()
             server.login(sender, password)
             server.sendmail(sender, recipient, msg.as_string())
 
         return True, f"Confirmation sent to {recipient}"
 
+    except smtplib.SMTPAuthenticationError:
+        return False, "SMTP authentication failed. Check EMAIL_SENDER and EMAIL_PASSWORD in .env."
+    except smtplib.SMTPException as e:
+        return False, f"SMTP error: {e}"
     except Exception as e:
-        return False, str(e)
+        return False, f"Unexpected error: {e}"
 
 
 
@@ -272,6 +279,8 @@ if "pending_order_id" not in st.session_state:
     st.session_state.pending_order_id = None
 if "just_saved_order" not in st.session_state:
     st.session_state.just_saved_order = False
+if "just_submitted_order" not in st.session_state:
+    st.session_state.just_submitted_order = False
 
 # ── CUSTOM CSS ───────────────────────────────────────────────
 st.markdown(f"""
@@ -720,7 +729,7 @@ elif page == "📋 New Measurement":
             else:
                 st.warning(f"📧 Email not sent: {msg}")
 
-# Show "Continue" button outside the form, after a successful save
+# ── POST-SUBMIT: continue button only ────────────────────────
 if st.session_state.just_saved_order:
     st.markdown("---")
     st.markdown("### 📋 Next Step: Submit Order Details")
@@ -928,6 +937,30 @@ elif page == "🔍 Order Tracking":
                     st.info(
                         f"Delivery: {od_delivery} | {od_payment} | ₦{od_amount:,.0f}"
                     )
+                    st.session_state.just_submitted_order = True
+
+    # ── THANK-YOU PAGE (shown after order details are submitted) ──
+    if st.session_state.just_submitted_order:
+        st.session_state.just_submitted_order = False
+        st.markdown("""
+        <div style="
+            background: linear-gradient(135deg, #1E3A6E 0%, #0D2247 100%);
+            border-radius: 18px;
+            padding: 48px 36px;
+            text-align: center;
+            border: 1px solid #2563EB55;
+            margin: 24px 0 10px 0;
+        ">
+            <p style="font-size: 56px; margin: 0 0 14px 0;">✂️</p>
+            <h2 style="color: white; margin: 0 0 16px 0; font-size: 28px; letter-spacing: 1px;">
+                We are happy to serve you.
+            </h2>
+            <p style="color: #93C5FD; font-size: 17px; line-height: 1.8; margin: 0 auto; max-width: 540px;">
+                At <strong style="color: white;">NE Clothiers</strong>, we are a one customer brand,
+                and we tailor for the leading man.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
     # ── EMPTY STATE ──────────────────────────────────────────
     if not search_query.strip():

@@ -57,9 +57,8 @@ os.makedirs(RECEIPT_FOLDER, exist_ok=True)
 FIELDS = [
     "Order ID", "Name", "Phone", "Email", "Outfit Type", "Unit",
     "Date Created", "Expected Delivery Date",
-    "Payment Status", "Amount Paid",
+    "Amount Paid",
     "Receipt File", "Design Photo", "Customer Notes",
-    "Delivery Status",
     "Chest", "Stomach", "Shoulder", "Sleeve Length",
     "Neck", "Round Sleeve", "Top Length",
     "Trouser Length", "Trouser-waist", "Hips",
@@ -122,8 +121,7 @@ def generate_order_id() -> str:
 def is_overdue(row) -> bool:
     try:
         delivery = pd.to_datetime(row["Expected Delivery Date"])
-        status   = str(row.get("Delivery Status", "")).strip()
-        return delivery < pd.Timestamp(date.today()) and status != "Delivered"
+        return delivery < pd.Timestamp(date.today())
     except Exception:
         return False
 
@@ -156,8 +154,6 @@ def generate_pdf_receipt(record: dict) -> bytes:
         ("Unit",            "Unit"),
         ("Date Created",    "Date Created"),
         ("Delivery Date",   "Expected Delivery Date"),
-        ("Delivery Status", "Delivery Status"),
-        ("Payment Status",  "Payment Status"),
         ("Amount Paid",     "Amount Paid"),
         ("Notes",           "Customer Notes"),
     ]:
@@ -238,8 +234,6 @@ Order Details:
   Unit            : {record.get('Unit', '—')}
   Date            : {record.get('Date Created', '—')}
   Expected Delivery: {record.get('Expected Delivery Date', '—') or '—'}
-  Delivery Status : {record.get('Delivery Status', '—')}
-  Payment Status  : {record.get('Payment Status', '—')}
   Amount Paid     : ₦{float(record.get('Amount Paid') or 0):,.0f}
 
 Please find your full measurement receipt attached as a PDF.
@@ -286,6 +280,8 @@ if "just_saved_order" not in st.session_state:
     st.session_state.just_saved_order = False
 if "just_submitted_order" not in st.session_state:
     st.session_state.just_submitted_order = False
+if "show_ai_prompt" not in st.session_state:
+    st.session_state.show_ai_prompt = False
 
 # ── CUSTOM CSS ───────────────────────────────────────────────
 st.markdown(f"""
@@ -424,8 +420,6 @@ if page == "🔐 Admin":
             st.info("No records yet. Add your first customer measurement to see stats here.")
         else:
             total      = len(df)
-            fully_paid = len(df[df["Payment Status"] == "Fully Paid"])
-            part_paid  = len(df[df["Payment Status"] == "Part Payment"])
 
             today = pd.Timestamp(date.today())
             try:
@@ -434,46 +428,33 @@ if page == "🔐 Admin":
                     (df["_delivery_dt"] >= today) &
                     (df["_delivery_dt"] <= today + pd.Timedelta(days=7))
                 ]
-                delivery_col = df.get("Delivery Status", pd.Series([""] * len(df)))
-                overdue = df[
-                    (df["_delivery_dt"] < today) &
-                    (delivery_col.astype(str) != "Delivered")
-                ]
+                overdue = df[df["_delivery_dt"] < today]
             except Exception:
                 due_this_week = pd.DataFrame()
                 overdue       = pd.DataFrame()
 
             total_collected = pd.to_numeric(df["Amount Paid"], errors="coerce").sum()
 
-            c1, c2, c3, c4, c5 = st.columns(5)
+            c1, c2, c3 = st.columns(3)
             c1.metric("👥 Total Customers", total)
-            c2.metric("✅ Fully Paid",       fully_paid)
-            c3.metric("🕐 Part Payment",     part_paid)
-            c4.metric("📅 Due This Week",    len(due_this_week))
-            c5.metric("⚠️ Overdue",          len(overdue))
+            c2.metric("📅 Due This Week",   len(due_this_week))
+            c3.metric("⚠️ Overdue",         len(overdue))
 
             st.markdown(f"### 💰 Total Collected: ₦{total_collected:,.0f}")
             st.markdown("---")
 
-            chart_col1, chart_col2 = st.columns(2)
-            with chart_col1:
-                st.markdown("**Payment Status Breakdown**")
-                st.bar_chart(df["Payment Status"].value_counts())
-            with chart_col2:
-                st.markdown("**Outfit Type Breakdown**")
-                st.bar_chart(df["Outfit Type"].value_counts())
+            st.markdown("**Outfit Type Breakdown**")
+            st.bar_chart(df["Outfit Type"].value_counts())
 
             st.markdown("---")
             st.markdown("**🕐 5 Most Recent Entries**")
-            recent_cols = ["Order ID", "Name", "Phone", "Outfit Type",
-                           "Payment Status", "Expected Delivery Date", "Delivery Status"]
+            recent_cols = ["Order ID", "Name", "Phone", "Outfit Type", "Expected Delivery Date"]
             st.dataframe(df.tail(5)[recent_cols].iloc[::-1], use_container_width=True)
 
             if not overdue.empty:
                 st.markdown("---")
                 st.markdown("**🚨 Overdue Orders**")
-                overdue_cols = ["Order ID", "Name", "Phone", "Outfit Type",
-                                "Expected Delivery Date", "Payment Status"]
+                overdue_cols = ["Order ID", "Name", "Phone", "Outfit Type", "Expected Delivery Date"]
                 st.dataframe(overdue[overdue_cols], use_container_width=True)
 
         st.markdown("---")
@@ -482,14 +463,12 @@ if page == "🔐 Admin":
         st.markdown("#### 🗂️ All Records")
         df_all = load_data()
 
-        fa1, fa2, fa3 = st.columns([2, 1, 1])
+        fa1, fa2 = st.columns([2, 1])
         with fa1:
             a_search = st.text_input("🔍 Search", placeholder="Name, phone, or Order ID...")
         with fa2:
             outfit_opts = ["All"] + sorted(df_all["Outfit Type"].dropna().unique().tolist())
             a_outfit = st.selectbox("Outfit", outfit_opts)
-        with fa3:
-            a_payment = st.selectbox("Payment", ["All", "Not Paid", "Part Payment", "Fully Paid"])
 
         filtered = df_all.copy()
         if a_search:
@@ -501,8 +480,6 @@ if page == "🔐 Admin":
             ]
         if a_outfit != "All":
             filtered = filtered[filtered["Outfit Type"] == a_outfit]
-        if a_payment != "All":
-            filtered = filtered[filtered["Payment Status"] == a_payment]
 
         st.caption(f"Showing {len(filtered)} of {len(df_all)} records")
         st.dataframe(filtered, use_container_width=True, height=300)
@@ -524,37 +501,29 @@ if page == "🔐 Admin":
 
             with ec1:
                 with st.expander("✏️ Edit"):
-                    outfit_list   = ["Agbada", "Senator", "Suit", "Kaftan"]
-                    delivery_list = ["Pending", "In Progress", "Ready", "Delivered"]
-                    payment_list  = ["Not Paid", "Part Payment", "Fully Paid"]
+                    outfit_list = ["Agbada", "Senator", "Suit", "Kaftan"]
 
                     def safe_index(lst, val, default=0):
                         return lst.index(val) if val in lst else default
 
                     with st.form("edit_form"):
-                        e_name     = st.text_input("Name",   value=str(sel_row.get("Name", "")))
-                        e_phone    = st.text_input("Phone",  value=str(sel_row.get("Phone", "")))
-                        e_outfit   = st.selectbox("Outfit Type", outfit_list,
-                                                  index=safe_index(outfit_list, sel_row.get("Outfit Type", "")))
-                        e_delivery_status = st.selectbox("Delivery Status", delivery_list,
-                                                  index=safe_index(delivery_list, sel_row.get("Delivery Status", "")))
-                        e_payment  = st.selectbox("Payment Status", payment_list,
-                                                  index=safe_index(payment_list, sel_row.get("Payment Status", "")))
-                        e_amount   = st.number_input("Amount Paid (₦)",
-                                                     value=float(sel_row.get("Amount Paid") or 0),
-                                                     min_value=0.0, step=1000.0)
-                        e_notes    = st.text_area("Notes", value=str(sel_row.get("Customer Notes", "")))
-                        save_edit  = st.form_submit_button("💾 Save Changes")
+                        e_name   = st.text_input("Name",  value=str(sel_row.get("Name", "")))
+                        e_phone  = st.text_input("Phone", value=str(sel_row.get("Phone", "")))
+                        e_outfit = st.selectbox("Outfit Type", outfit_list,
+                                                index=safe_index(outfit_list, sel_row.get("Outfit Type", "")))
+                        e_amount = st.number_input("Amount Paid (₦)",
+                                                   value=float(sel_row.get("Amount Paid") or 0),
+                                                   min_value=0.0, step=1000.0)
+                        e_notes  = st.text_area("Notes", value=str(sel_row.get("Customer Notes", "")))
+                        save_edit = st.form_submit_button("💾 Save Changes")
 
                     if save_edit:
                         update_record(sel_idx, {
-                            "Name":            e_name,
-                            "Phone":           e_phone,
-                            "Outfit Type":     e_outfit,
-                            "Delivery Status": e_delivery_status,
-                            "Payment Status":  e_payment,
-                            "Amount Paid":     e_amount,
-                            "Customer Notes":  e_notes,
+                            "Name":           e_name,
+                            "Phone":          e_phone,
+                            "Outfit Type":    e_outfit,
+                            "Amount Paid":    e_amount,
+                            "Customer Notes": e_notes,
                         })
                         st.success("Record updated.")
                         st.rerun()
@@ -716,8 +685,6 @@ elif page == "📋 New Measurement":
                 "Unit":                   unit,
                 "Date Created":           datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "Expected Delivery Date": "",
-                "Delivery Status":        "Pending",
-                "Payment Status":         "Not Paid",
                 "Amount Paid":            0,
                 "Receipt File":           "",
                 "Design Photo":           design_filename,
@@ -744,7 +711,7 @@ if st.session_state.just_saved_order:
     st.markdown("### 📋 Next Step: Submit Order Details")
     st.markdown(
         "Measurements saved. Click below to add delivery date, "
-        "payment info, and any special notes."
+        "amount paid, and any special notes."
     )
     if st.button("➡️ Continue to Order Details", type="primary", use_container_width=True):
         st.session_state.just_saved_order = False
@@ -1006,8 +973,6 @@ Fill every measurement field with a numeric value (e.g. "42"). Use your best pro
                         "Unit":                   ais_unit,
                         "Date Created":           datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "Expected Delivery Date": "",
-                        "Delivery Status":        "Pending",
-                        "Payment Status":         "Not Paid",
                         "Amount Paid":            0,
                         "Receipt File":           "",
                         "Design Photo":           "",
@@ -1074,18 +1039,6 @@ elif page == "🔍 Order Tracking":
             found_order_id = str(results.iloc[0].get("Order ID", ""))
 
             for row_idx, row in results.iterrows():
-                delivery_status = str(row.get("Delivery Status", "Pending"))
-
-                status_map = {
-                    "Pending":     ("🕐", "#F59E0B", "#1C1400"),
-                    "In Progress": ("🔧", "#3B82F6", "#0A1628"),
-                    "Ready":       ("✅", "#10B981", "#021A0E"),
-                    "Delivered":   ("📦", "#6B7280", "#111827"),
-                }
-                icon, badge_color, badge_bg = status_map.get(
-                    delivery_status, ("🕐", "#F59E0B", "#1C1400")
-                )
-
                 order_id      = row.get("Order ID", "—")
                 delivery_date = row.get("Expected Delivery Date", "—") or "—"
                 amount        = float(row.get("Amount Paid") or 0)
@@ -1096,7 +1049,7 @@ elif page == "🔍 Order Tracking":
                     border-radius: 14px;
                     padding: 22px 26px;
                     margin-bottom: 18px;
-                    border-left: 5px solid {badge_color};
+                    border-left: 5px solid #2563EB;
                 ">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
                         <div>
@@ -1109,29 +1062,12 @@ elif page == "🔍 Order Tracking":
                                 🗓️ Placed: {row.get("Date Created", "—")}
                             </p>
                         </div>
-                        <div style="
-                            background-color: {badge_bg};
-                            border: 2px solid {badge_color};
-                            border-radius: 20px;
-                            padding: 8px 20px;
-                            font-weight: bold;
-                            color: {badge_color};
-                            font-size: 16px;
-                            white-space: nowrap;
-                            align-self: center;
-                        ">
-                            {icon} {delivery_status}
-                        </div>
                     </div>
                     <hr style="border-color:#2563EB44; margin: 16px 0 14px 0;">
                     <div style="display:flex; gap:40px; flex-wrap:wrap;">
                         <div>
                             <p style="color:#94A3B8; margin:0; font-size:11px; letter-spacing:1px;">EXPECTED DELIVERY</p>
                             <p style="color:white; margin:2px 0 0 0; font-size:15px; font-weight:600;">📆 {delivery_date}</p>
-                        </div>
-                        <div>
-                            <p style="color:#94A3B8; margin:0; font-size:11px; letter-spacing:1px;">PAYMENT STATUS</p>
-                            <p style="color:white; margin:2px 0 0 0; font-size:15px; font-weight:600;">💳 {row.get("Payment Status", "—")}</p>
                         </div>
                         <div>
                             <p style="color:#94A3B8; margin:0; font-size:11px; letter-spacing:1px;">AMOUNT PAID</p>
@@ -1151,17 +1087,14 @@ elif page == "🔍 Order Tracking":
     st.markdown("### 📝 Submit Order Details")
     st.markdown(
         "Already have an Order ID? Use this form to add your delivery date, "
-        "payment info, and notes."
+        "amount paid, and notes."
     )
 
     # Pre-fill values from search result if available
-    prefill_row = results.iloc[0] if not results.empty else None
-    default_order_id  = found_order_id
-    default_payment   = str(prefill_row.get("Payment Status", "Not Paid")) if prefill_row is not None else "Not Paid"
-    default_amount    = float(prefill_row.get("Amount Paid") or 0) if prefill_row is not None else 0.0
-    default_notes     = str(prefill_row.get("Customer Notes", "") or "") if prefill_row is not None else ""
-    payment_list      = ["Not Paid", "Part Payment", "Fully Paid"]
-    default_pay_idx   = payment_list.index(default_payment) if default_payment in payment_list else 0
+    prefill_row      = results.iloc[0] if not results.empty else None
+    default_order_id = found_order_id
+    default_amount   = float(prefill_row.get("Amount Paid") or 0) if prefill_row is not None else 0.0
+    default_notes    = str(prefill_row.get("Customer Notes", "") or "") if prefill_row is not None else ""
 
     with st.form("order_details_form", clear_on_submit=True):
         od_col1, od_col2 = st.columns([1, 1])
@@ -1173,7 +1106,6 @@ elif page == "🔍 Order Tracking":
                 placeholder="e.g. NEC-2026-A3F7"
             )
             od_delivery = st.date_input("Expected Delivery Date")
-            od_payment  = st.selectbox("Payment Status", payment_list, index=default_pay_idx)
             od_amount   = st.number_input("Amount Paid (₦)",
                                           value=default_amount,
                                           min_value=0.0, step=1000.0)
@@ -1213,16 +1145,13 @@ elif page == "🔍 Order Tracking":
 
                     update_record(record_idx, {
                         "Expected Delivery Date": str(od_delivery),
-                        "Payment Status":         od_payment,
                         "Amount Paid":            od_amount,
                         "Customer Notes":         od_notes,
                         "Receipt File":           receipt_filename,
                     })
 
                     st.success(f"✅ Order details updated for **{od_order_id.strip().upper()}**!")
-                    st.info(
-                        f"Delivery: {od_delivery} | {od_payment} | ₦{od_amount:,.0f}"
-                    )
+                    st.info(f"Delivery: {od_delivery} | ₦{od_amount:,.0f}")
 
                     # Send updated order confirmation email to customer
                     updated_df = load_data()
@@ -1234,6 +1163,7 @@ elif page == "🔍 Order Tracking":
                         st.warning(f"📧 Email not sent: {msg}")
 
                     st.session_state.just_submitted_order = True
+                    st.session_state.show_ai_prompt = True
 
     # ── THANK-YOU PAGE (shown after order details are submitted) ──
     if st.session_state.just_submitted_order:
@@ -1258,10 +1188,13 @@ elif page == "🔍 Order Tracking":
         </div>
         """, unsafe_allow_html=True)
 
+    # ── AI PROMPT BUTTON (persists across rerun after submission) ──
+    if st.session_state.show_ai_prompt:
         st.markdown("<br>", unsafe_allow_html=True)
         _, btn_col, _ = st.columns([1, 2, 1])
         with btn_col:
-            if st.button("📐 Try AI Body Measurement", use_container_width=True):
+            if st.button("📐 Try AI Body Measurement", use_container_width=True, key="ai_prompt_btn"):
+                st.session_state.show_ai_prompt = False
                 st.session_state["_nav_override"] = "📐 AI Measurements"
                 st.rerun()
 

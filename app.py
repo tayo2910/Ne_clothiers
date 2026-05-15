@@ -374,13 +374,19 @@ with st.sidebar:
 
     # All users see the same nav items — Dashboard is hidden inside Admin
     _nav_options = ["📋 New Measurement", "📐 AI Measurements", "🔍 Order Tracking", "🔐 Admin"]
-    _nav_default = 2 if st.session_state.pending_order_id else 0
+
+    # Handle programmatic navigation
     if "_nav_override" in st.session_state:
-        _nav_default = _nav_options.index(st.session_state.pop("_nav_override"))
+        st.session_state["_nav_radio"] = st.session_state.pop("_nav_override")
+    elif "pending_order_id" in st.session_state and st.session_state.pending_order_id:
+        st.session_state["_nav_radio"] = "🔍 Order Tracking"
+    elif "_nav_radio" not in st.session_state:
+        st.session_state["_nav_radio"] = "📋 New Measurement"
+
     page = st.radio(
         "Navigate",
         _nav_options,
-        index=_nav_default
+        key="_nav_radio"
     )
     st.markdown("---")
 

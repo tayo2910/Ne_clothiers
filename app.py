@@ -1188,16 +1188,6 @@ elif page == "🔍 Order Tracking":
         </div>
         """, unsafe_allow_html=True)
 
-    # ── AI PROMPT BUTTON (persists across rerun after submission) ──
-    if st.session_state.show_ai_prompt:
-        st.markdown("<br>", unsafe_allow_html=True)
-        _, btn_col, _ = st.columns([1, 2, 1])
-        with btn_col:
-            if st.button("📐 Try AI Body Measurement", use_container_width=True, key="ai_prompt_btn"):
-                st.session_state.show_ai_prompt = False
-                st.session_state["_nav_override"] = "📐 AI Measurements"
-                st.rerun()
-
     # ── EMPTY STATE ──────────────────────────────────────────
     if not search_query.strip():
         st.markdown("""
@@ -1215,4 +1205,18 @@ elif page == "🔍 Order Tracking":
             </p>
         </div>
         """, unsafe_allow_html=True)
+
+# ── AI PROMPT BUTTON (global — shown after any order submission) ──────────────
+if st.session_state.show_ai_prompt:
+    st.markdown("---")
+    st.markdown(
+        "<p style='color:#93C5FD; text-align:center;'>Want to capture measurements using AI?</p>",
+        unsafe_allow_html=True
+    )
+    _, btn_col, _ = st.columns([1, 2, 1])
+    with btn_col:
+        if st.button("📐 Try AI Body Measurement", use_container_width=True, key="ai_prompt_btn"):
+            st.session_state.show_ai_prompt = False
+            st.session_state["_nav_override"] = "📐 AI Measurements"
+            st.rerun()
 

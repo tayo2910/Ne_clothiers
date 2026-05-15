@@ -164,7 +164,7 @@ def generate_pdf_receipt(record: dict) -> bytes:
         val = record.get(key, "")
         if key == "Amount Paid":
             try:
-                val = f"\u20a6{float(val):,.0f}"
+                val = f"NGN {float(val):,.0f}"
             except (ValueError, TypeError):
                 val = str(val)
         row(label, val)
@@ -375,10 +375,14 @@ with st.sidebar:
     st.markdown("---")
 
     # All users see the same nav items — Dashboard is hidden inside Admin
+    _nav_options = ["📋 New Measurement", "📐 AI Measurements", "🔍 Order Tracking", "🔐 Admin"]
+    _nav_default = 2 if st.session_state.pending_order_id else 0
+    if "_nav_override" in st.session_state:
+        _nav_default = _nav_options.index(st.session_state.pop("_nav_override"))
     page = st.radio(
         "Navigate",
-        ["📋 New Measurement", "📐 AI Measurements", "🔍 Order Tracking", "🔐 Admin"],
-        index=2 if st.session_state.pending_order_id else 0
+        _nav_options,
+        index=_nav_default
     )
     st.markdown("---")
 
@@ -1253,6 +1257,13 @@ elif page == "🔍 Order Tracking":
             </p>
         </div>
         """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        _, btn_col, _ = st.columns([1, 2, 1])
+        with btn_col:
+            if st.button("📐 Try AI Body Measurement", use_container_width=True):
+                st.session_state["_nav_override"] = "📐 AI Measurements"
+                st.rerun()
 
     # ── EMPTY STATE ──────────────────────────────────────────
     if not search_query.strip():

@@ -282,6 +282,8 @@ if "just_submitted_order" not in st.session_state:
     st.session_state.just_submitted_order = False
 if "show_ai_prompt" not in st.session_state:
     st.session_state.show_ai_prompt = False
+if "ai_prompt_pending" not in st.session_state:
+    st.session_state.ai_prompt_pending = False
 
 # ── CUSTOM CSS ───────────────────────────────────────────────
 st.markdown(f"""
@@ -1163,10 +1165,10 @@ elif page == "🔍 Order Tracking":
                         st.warning(f"📧 Email not sent: {msg}")
 
                     st.session_state.just_submitted_order = True
-                    st.session_state.show_ai_prompt = True
+                    st.session_state.ai_prompt_pending = True
 
-    # ── THANK-YOU PAGE (shown after order details are submitted) ──
-    if st.session_state.just_submitted_order:
+    # ── THANK-YOU CARD (shown after order details are submitted) ──
+    if st.session_state.just_submitted_order or st.session_state.show_ai_prompt:
         st.session_state.just_submitted_order = False
         st.markdown("""
         <div style="
@@ -1188,8 +1190,8 @@ elif page == "🔍 Order Tracking":
         </div>
         """, unsafe_allow_html=True)
 
-    # ── EMPTY STATE ──────────────────────────────────────────
-    if not search_query.strip():
+    # ── EMPTY STATE (only when no submission is pending) ─────
+    if not search_query.strip() and not st.session_state.show_ai_prompt and not st.session_state.just_submitted_order:
         st.markdown("""
         <div style="
             background-color: #1E3A6E;
@@ -1206,11 +1208,16 @@ elif page == "🔍 Order Tracking":
         </div>
         """, unsafe_allow_html=True)
 
-# ── AI PROMPT BUTTON (global — shown after any order submission) ──────────────
+# ── AI PROMPT: promote pending flag, then show button ────────────────────────
+if st.session_state.ai_prompt_pending:
+    st.session_state.ai_prompt_pending = False
+    st.session_state.show_ai_prompt = True
+
 if st.session_state.show_ai_prompt:
     st.markdown("---")
     st.markdown(
-        "<p style='color:#93C5FD; text-align:center;'>Want to capture measurements using AI?</p>",
+        "<p style='color:#93C5FD; text-align:center; font-size:15px;'>"
+        "Would you like to capture measurements using AI?</p>",
         unsafe_allow_html=True
     )
     _, btn_col, _ = st.columns([1, 2, 1])

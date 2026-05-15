@@ -6,6 +6,7 @@ import os
 import io
 import re
 import uuid
+import base64
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -232,10 +233,14 @@ def send_order_confirmation_email(record: dict) -> tuple[bool, str]:
 Thank you for choosing NE Clothiers! Your measurement has been recorded successfully.
 
 Order Details:
-  Order ID   : {record.get('Order ID', '—')}
-  Outfit     : {record.get('Outfit Type', '—')}
-  Unit       : {record.get('Unit', '—')}
-  Date       : {record.get('Date Created', '—')}
+  Order ID        : {record.get('Order ID', '—')}
+  Outfit          : {record.get('Outfit Type', '—')}
+  Unit            : {record.get('Unit', '—')}
+  Date            : {record.get('Date Created', '—')}
+  Expected Delivery: {record.get('Expected Delivery Date', '—') or '—'}
+  Delivery Status : {record.get('Delivery Status', '—')}
+  Payment Status  : {record.get('Payment Status', '—')}
+  Amount Paid     : ₦{float(record.get('Amount Paid') or 0):,.0f}
 
 Please find your full measurement receipt attached as a PDF.
 Keep your Order ID handy — you can use it to track your order status at any time.
@@ -369,11 +374,11 @@ with st.sidebar:
     st.title("NE Clothiers")
     st.markdown("---")
 
-    # All users see the same 3 nav items — Dashboard is hidden inside Admin
+    # All users see the same nav items — Dashboard is hidden inside Admin
     page = st.radio(
         "Navigate",
-        ["📋 New Measurement", "🔍 Order Tracking", "🔐 Admin"],
-        index=1 if st.session_state.pending_order_id else 0
+        ["📋 New Measurement", "📐 AI Measurements", "🔍 Order Tracking", "🔐 Admin"],
+        index=2 if st.session_state.pending_order_id else 0
     )
     st.markdown("---")
 
@@ -742,6 +747,283 @@ if st.session_state.just_saved_order:
         st.rerun()
 
 # ════════════════════════════════════════════════════════════
+# PAGE: AI MEASUREMENTS (silhouette scan)
+# ════════════════════════════════════════════════════════════
+elif page == "📐 AI Measurements":
+    st.subheader("📐 AI Body Measurement Assistant")
+    st.markdown(
+        "<p style='color:#93C5FD; text-align:center;'>Upload clear front and back photos of the customer. "
+        "Our AI will analyse the silhouette and suggest body measurements.</p>",
+        unsafe_allow_html=True
+    )
+
+    # ── INSTRUCTIONS ─────────────────────────────────────────
+    with st.expander("📸 Photo Guidelines", expanded=True):
+        st.markdown("""
+**For best results:**
+- Stand straight against a plain, well-lit background
+- Wear form-fitting clothing (no baggy outfits)
+- Arms slightly away from the body
+- Full body visible from head to toe in both shots
+- Front photo: face the camera directly
+- Back photo: turn completely around, same pose
+        """)
+
+    ai_col1, ai_col2 = st.columns(2)
+
+    with ai_col1:
+        st.markdown("#### 🧍 Front View")
+        front_photo = st.file_uploader(
+            "Upload front photo",
+            type=["png", "jpg", "jpeg"],
+            key="ai_front",
+            label_visibility="collapsed"
+        )
+        if front_photo:
+            st.image(front_photo, caption="Front View", use_container_width=True)
+
+    with ai_col2:
+        st.markdown("#### 🧍‍♂️ Back View")
+        back_photo = st.file_uploader(
+            "Upload back photo",
+            type=["png", "jpg", "jpeg"],
+            key="ai_back",
+            label_visibility="collapsed"
+        )
+        if back_photo:
+            st.image(back_photo, caption="Back View", use_container_width=True)
+
+    st.markdown("---")
+
+    ai_unit = st.radio("Preferred measurement unit", ["cm", "inches"], horizontal=True, key="ai_unit")
+    ai_height = st.text_input(
+        "Customer height (optional — improves accuracy)",
+        placeholder="e.g. 175 cm  or  5ft 9in",
+        key="ai_height"
+    )
+
+    scan_btn = st.button("🤖 Scan & Estimate Measurements", type="primary", use_container_width=True)
+
+    if scan_btn:
+        if not front_photo or not back_photo:
+            st.error("Please upload both the front and back photos before scanning.")
+        else:
+            openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+            if not openai_key:
+                st.error(
+                    "OpenAI API key not found. Add `OPENAI_API_KEY=sk-...` to your `.env` file "
+                    "to enable AI measurement scanning."
+                )
+            else:
+                with st.spinner("🤖 Analysing silhouette… this may take a few seconds…"):
+                    try:
+                        import httpx
+
+                        def _encode(file_obj) -> str:
+                            file_obj.seek(0)
+                            return base64.b64encode(file_obj.read()).decode("utf-8")
+
+                        front_b64 = _encode(front_photo)
+                        back_b64  = _encode(back_photo)
+
+                        height_hint = (
+                            f"The customer's height is {ai_height.strip()}. Use this as a scale reference."
+                            if ai_height.strip() else
+                            "No height reference was provided; give your best estimate."
+                        )
+
+                        prompt = f"""You are an expert tailor's assistant. Analyse the two photos of the same person — one front view and one back view — and estimate their body measurements in {ai_unit}.
+
+{height_hint}
+
+Return ONLY a JSON object with these exact keys (no extra text, no markdown fences):
+{{
+  "Chest": "",
+  "Stomach": "",
+  "Shoulder": "",
+  "Sleeve Length": "",
+  "Neck": "",
+  "Round Sleeve": "",
+  "Top Length": "",
+  "Trouser Length": "",
+  "Trouser-waist": "",
+  "Hips": "",
+  "Laps": "",
+  "Knee": "",
+  "Ankle": "",
+  "confidence": "low | medium | high",
+  "notes": "any caveats or assumptions"
+}}
+
+Fill every measurement field with a numeric value (e.g. "42"). Use your best professional estimate based on body proportions visible in the photos."""
+
+                        payload = {
+                            "model": "gpt-4o",
+                            "max_tokens": 600,
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": prompt},
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": f"data:{front_photo.type};base64,{front_b64}",
+                                                "detail": "high"
+                                            }
+                                        },
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": f"data:{back_photo.type};base64,{back_b64}",
+                                                "detail": "high"
+                                            }
+                                        },
+                                    ]
+                                }
+                            ]
+                        }
+
+                        resp = httpx.post(
+                            "https://api.openai.com/v1/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {openai_key}",
+                                "Content-Type": "application/json"
+                            },
+                            json=payload,
+                            timeout=60
+                        )
+                        resp.raise_for_status()
+                        raw = resp.json()["choices"][0]["message"]["content"].strip()
+
+                        # Strip markdown fences if model adds them anyway
+                        if raw.startswith("```"):
+                            raw = re.sub(r"^```[a-z]*\n?", "", raw)
+                            raw = re.sub(r"\n?```$", "", raw)
+
+                        import json
+                        ai_result = json.loads(raw)
+                        st.session_state["ai_measurements"] = ai_result
+                        st.session_state["ai_unit"] = ai_unit
+
+                    except httpx.HTTPStatusError as e:
+                        st.error(f"OpenAI API error {e.response.status_code}: {e.response.text[:300]}")
+                        ai_result = None
+                    except Exception as e:
+                        st.error(f"Scan failed: {e}")
+                        ai_result = None
+
+    # ── DISPLAY RESULTS ───────────────────────────────────────
+    if "ai_measurements" in st.session_state and st.session_state["ai_measurements"]:
+        ai_result = st.session_state["ai_measurements"]
+        confidence = ai_result.get("confidence", "medium")
+        notes      = ai_result.get("notes", "")
+
+        conf_color = {"high": "#10B981", "medium": "#F59E0B", "low": "#EF4444"}.get(confidence, "#F59E0B")
+        st.markdown(
+            f"<p style='color:{conf_color}; font-weight:bold; text-align:center;'>"
+            f"AI Confidence: {confidence.upper()}</p>",
+            unsafe_allow_html=True
+        )
+        if notes:
+            st.info(f"💬 AI notes: {notes}")
+
+        st.markdown("#### 📏 Estimated Measurements")
+        res_col1, res_col2 = st.columns(2)
+
+        with res_col1:
+            st.markdown("**Upper Body**")
+            for field in UPPER_BODY:
+                val = ai_result.get(field, "—")
+                st.markdown(
+                    f"<div style='display:flex;justify-content:space-between;"
+                    f"padding:6px 12px;background:#1E3A6E;border-radius:8px;margin-bottom:4px;'>"
+                    f"<span style='color:#93C5FD;'>{field}</span>"
+                    f"<span style='color:white;font-weight:bold;'>{val} {st.session_state.get('ai_unit','cm')}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+        with res_col2:
+            st.markdown("**Lower Body**")
+            for field in LOWER_BODY:
+                val = ai_result.get(field, "—")
+                st.markdown(
+                    f"<div style='display:flex;justify-content:space-between;"
+                    f"padding:6px 12px;background:#1E3A6E;border-radius:8px;margin-bottom:4px;'>"
+                    f"<span style='color:#93C5FD;'>{field}</span>"
+                    f"<span style='color:white;font-weight:bold;'>{val} {st.session_state.get('ai_unit','cm')}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+        st.markdown("---")
+        st.markdown(
+            "✅ **Happy with these estimates?** Head to **📋 New Measurement** and enter them manually, "
+            "or use the form below to save them directly to a new order."
+        )
+
+        # ── QUICK-SAVE TO NEW ORDER ───────────────────────────
+        with st.expander("💾 Save AI Measurements as New Order", expanded=False):
+            with st.form("ai_save_form"):
+                ais_name  = st.text_input("Customer Name *")
+                ais_phone = st.text_input("Phone Number *")
+                ais_email = st.text_input("Email Address *", placeholder="customer@example.com")
+                ais_outfit = st.selectbox("Outfit Type", ["Agbada", "Senator", "Suit", "Kaftan"])
+                ais_unit   = st.radio("Unit", ["cm", "inches"], horizontal=True,
+                                      index=0 if st.session_state.get("ai_unit", "cm") == "cm" else 1)
+                ais_submit = st.form_submit_button("💾 Save Order", use_container_width=True)
+
+            if ais_submit:
+                ais_errors = []
+                if not ais_name.strip():
+                    ais_errors.append("Customer name is required.")
+                if not ais_phone.strip():
+                    ais_errors.append("Phone number is required.")
+                elif not validate_phone(ais_phone):
+                    ais_errors.append("Phone number format is invalid.")
+                if not ais_email.strip():
+                    ais_errors.append("Email address is required.")
+                elif not validate_email(ais_email.strip()):
+                    ais_errors.append("Email address format is invalid.")
+
+                if ais_errors:
+                    for e in ais_errors:
+                        st.error(e)
+                else:
+                    order_id = generate_order_id()
+                    meas = {f: str(ai_result.get(f, "")) for f in UPPER_BODY + LOWER_BODY}
+                    data = {
+                        "Order ID":               order_id,
+                        "Name":                   ais_name.strip(),
+                        "Phone":                  ais_phone.strip(),
+                        "Email":                  ais_email.strip(),
+                        "Outfit Type":            ais_outfit,
+                        "Unit":                   ais_unit,
+                        "Date Created":           datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "Expected Delivery Date": "",
+                        "Delivery Status":        "Pending",
+                        "Payment Status":         "Not Paid",
+                        "Amount Paid":            0,
+                        "Receipt File":           "",
+                        "Design Photo":           "",
+                        "Customer Notes":         f"Measurements estimated by AI (confidence: {confidence})",
+                        **meas
+                    }
+                    save_data(data)
+                    st.session_state.pending_order_id = order_id
+                    st.success(f"✅ Order saved! Order ID: **{order_id}**")
+
+                    ok, msg = send_order_confirmation_email(data)
+                    if ok:
+                        st.success(f"📧 {msg}")
+                    else:
+                        st.warning(f"📧 Email not sent: {msg}")
+
+                    # Clear cached AI result
+                    del st.session_state["ai_measurements"]
+
+# ════════════════════════════════════════════════════════════
 # PAGE: ORDER TRACKING (public)
 # ════════════════════════════════════════════════════════════
 elif page == "🔍 Order Tracking":
@@ -937,6 +1219,16 @@ elif page == "🔍 Order Tracking":
                     st.info(
                         f"Delivery: {od_delivery} | {od_payment} | ₦{od_amount:,.0f}"
                     )
+
+                    # Send updated order confirmation email to customer
+                    updated_df = load_data()
+                    updated_record = updated_df.loc[record_idx].to_dict()
+                    ok, msg = send_order_confirmation_email(updated_record)
+                    if ok:
+                        st.success(f"📧 {msg}")
+                    else:
+                        st.warning(f"📧 Email not sent: {msg}")
+
                     st.session_state.just_submitted_order = True
 
     # ── THANK-YOU PAGE (shown after order details are submitted) ──

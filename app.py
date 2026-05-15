@@ -78,10 +78,11 @@ def ensure_file():
 @st.cache_data
 def load_data() -> pd.DataFrame:
     ensure_file()
-    df = pd.read_csv(FILE_NAME)
+    df = pd.read_csv(FILE_NAME, dtype=str)
     for col in FIELDS:
         if col not in df.columns:
             df[col] = ""
+    df = df.fillna("")
     return df
 
 
@@ -95,7 +96,8 @@ def save_data(data: dict):
 def update_record(index: int, data: dict):
     df = load_data()
     for key, value in data.items():
-        df.at[index, key] = value
+        df[key] = df[key].astype(str)   # ensure column is string before assignment
+        df.at[index, key] = str(value)
     df.to_csv(FILE_NAME, index=False)
     st.cache_data.clear()
 

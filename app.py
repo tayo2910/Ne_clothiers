@@ -39,12 +39,15 @@ IMAGE_FOLDER   = "customer_images"
 RECEIPT_FOLDER = "receipts"
 OUTFIT_FOLDER  = "outfit_images"
 
+# Base directory — resolves correctly on both localhost and Streamlit Cloud
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Map outfit types to their preview images
 OUTFIT_IMAGES = {
-    "Agbada":  os.path.join(OUTFIT_FOLDER, "agbada.jpg"),
-    "Senator": os.path.join(OUTFIT_FOLDER, "senator.jpg"),
-    "Suit":    os.path.join(OUTFIT_FOLDER, "suit.jpg"),
-    "Kaftan":  os.path.join(OUTFIT_FOLDER, "kaftan.jpg"),
+    "Agbada":  os.path.join(BASE_DIR, OUTFIT_FOLDER, "agbada.jpg"),
+    "Senator": os.path.join(BASE_DIR, OUTFIT_FOLDER, "senator.jpg"),
+    "Suit":    os.path.join(BASE_DIR, OUTFIT_FOLDER, "suit.jpg"),
+    "Kaftan":  os.path.join(BASE_DIR, OUTFIT_FOLDER, "kaftan.jpg"),
 }
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
@@ -369,8 +372,8 @@ st.markdown(
 
 # ── SIDEBAR ──────────────────────────────────────────────────
 with st.sidebar:
-    if os.path.exists("ne.png"):
-        st.image("ne.png", width=110)
+    if os.path.exists(os.path.join(BASE_DIR, "ne.png")):
+        st.image(os.path.join(BASE_DIR, "ne.png"), width=110)
     st.title("NE Clothiers")
     st.markdown("---")
 

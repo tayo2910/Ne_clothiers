@@ -17,10 +17,6 @@ from datetime import datetime, date
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
-import streamlit as st
-
-EMAIL_SENDER = st.secrets["EMAIL_SENDER"]
-EMAIL_PASSWORD = st.secrets["EMAIL_PASSWORD"]
 
 load_dotenv()
 
@@ -56,13 +52,13 @@ OUTFIT_IMAGES = {
 
 def _secret(key: str, default: str = "") -> str:
     """Read from env first, then Streamlit secrets, then default."""
-    val = os.getenv(key, "").strip()
+    val = (os.getenv(key) or "").strip()
     if not val:
         try:
-            val = str(st.secrets.get(key, default)).strip()
+            val = str(st.secrets.get(key, default) or "").strip()
         except Exception:
             val = default
-    return val
+    return val or default
 
 ADMIN_USERNAME = _secret("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = _secret("ADMIN_PASSWORD", "nedee123")
@@ -224,13 +220,13 @@ def send_order_confirmation_email(record: dict) -> tuple[bool, str]:
 
     # Fall back to Streamlit secrets if env vars are missing (Streamlit Cloud)
     def _get(key: str, default: str = "") -> str:
-        val = os.getenv(key, "").strip()
+        val = (os.getenv(key) or "").strip()
         if not val:
             try:
-                val = st.secrets.get(key, default)
+                val = str(st.secrets.get(key, default) or "").strip()
             except Exception:
                 val = default
-        return str(val).strip()
+        return val or default
     
     sender   = _get("EMAIL_SENDER")
     password = _get("EMAIL_PASSWORD").replace(" ", "")

@@ -17,6 +17,10 @@ from datetime import datetime, date
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
+import streamlit as st
+
+EMAIL_SENDER = st.secrets["EMAIL_SENDER"]
+EMAIL_PASSWORD = st.secrets["EMAIL_PASSWORD"]
 
 load_dotenv()
 
@@ -227,7 +231,7 @@ def send_order_confirmation_email(record: dict) -> tuple[bool, str]:
             except Exception:
                 val = default
         return str(val).strip()
-
+    
     sender   = _get("EMAIL_SENDER")
     password = _get("EMAIL_PASSWORD").replace(" ", "")
     host     = _get("EMAIL_SMTP_HOST", "smtp.gmail.com")

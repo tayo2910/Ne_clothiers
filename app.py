@@ -50,8 +50,18 @@ OUTFIT_IMAGES = {
     "Kaftan":  os.path.join(BASE_DIR, OUTFIT_FOLDER, "kaftan.jpg"),
 }
 
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "nedee123")
+def _secret(key: str, default: str = "") -> str:
+    """Read from env first, then Streamlit secrets, then default."""
+    val = os.getenv(key, "").strip()
+    if not val:
+        try:
+            val = str(st.secrets.get(key, default)).strip()
+        except Exception:
+            val = default
+    return val
+
+ADMIN_USERNAME = _secret("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = _secret("ADMIN_PASSWORD", "nedee123")
 
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 os.makedirs(RECEIPT_FOLDER, exist_ok=True)
@@ -208,11 +218,20 @@ def send_order_confirmation_email(record: dict) -> tuple[bool, str]:
     # Re-load .env each call so credentials are always fresh
     load_dotenv(override=True)
 
-    sender   = os.getenv("EMAIL_SENDER", "").strip()
-    # Strip spaces from app password — Gmail displays them grouped but SMTP needs them removed
-    password = os.getenv("EMAIL_PASSWORD", "").replace(" ", "")
-    host     = os.getenv("EMAIL_SMTP_HOST", "smtp.gmail.com").strip()
-    port     = int(os.getenv("EMAIL_SMTP_PORT", 587))
+    # Fall back to Streamlit secrets if env vars are missing (Streamlit Cloud)
+    def _get(key: str, default: str = "") -> str:
+        val = os.getenv(key, "").strip()
+        if not val:
+            try:
+                val = st.secrets.get(key, default)
+            except Exception:
+                val = default
+        return str(val).strip()
+
+    sender   = _get("EMAIL_SENDER")
+    password = _get("EMAIL_PASSWORD").replace(" ", "")
+    host     = _get("EMAIL_SMTP_HOST", "smtp.gmail.com")
+    port     = int(_get("EMAIL_SMTP_PORT", "587") or 587)
 
     if not sender or not password:
         return False, "Email credentials not configured in .env (EMAIL_SENDER / EMAIL_PASSWORD)."

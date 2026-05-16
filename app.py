@@ -811,7 +811,7 @@ elif page == "📐 AI Measurements":
         if not front_photo or not back_photo:
             st.error("Please upload both the front and back photos before scanning.")
         else:
-            openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+            openai_key = _secret("OPENAI_API_KEY")
             if not openai_key:
                 st.error(
                     "OpenAI API key not found. Add `OPENAI_API_KEY=sk-...` to your `.env` file "

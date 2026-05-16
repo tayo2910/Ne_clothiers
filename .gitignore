@@ -6,3 +6,5 @@ customer_images/
 receipts/
 NE_Clothiers_measurements.csv
 NE_Clothiers_measurements.xlsx
+secrets.toml
+.streamlit/secrets.toml

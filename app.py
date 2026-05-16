@@ -41,9 +41,9 @@ OUTFIT_FOLDER  = "outfit_images"
 
 # Map outfit types to their preview images
 OUTFIT_IMAGES = {
-    "Agbada":  os.path.join(OUTFIT_FOLDER, "agbada.avif"),
+    "Agbada":  os.path.join(OUTFIT_FOLDER, "agbada.jpg"),
     "Senator": os.path.join(OUTFIT_FOLDER, "senator.jpg"),
-    "Suit":    os.path.join(OUTFIT_FOLDER, "suit.avif"),
+    "Suit":    os.path.join(OUTFIT_FOLDER, "suit.jpg"),
     "Kaftan":  os.path.join(OUTFIT_FOLDER, "kaftan.jpg"),
 }
 

@@ -793,9 +793,9 @@ elif page == "📐 AI Measurements":
         if front_photo:
             st.session_state["ai_front_bytes"] = front_photo.read()
             st.session_state["ai_front_type"]  = front_photo.type
-            st.image(st.session_state["ai_front_bytes"], caption="Front View", use_container_width=True)
-        elif "ai_front_bytes" in st.session_state:
-            st.image(st.session_state["ai_front_bytes"], caption="Front View (cached)", use_container_width=True)
+            st.image(io.BytesIO(st.session_state["ai_front_bytes"]), caption="Front View", use_container_width=True)
+        elif st.session_state.get("ai_front_bytes"):
+            st.image(io.BytesIO(st.session_state["ai_front_bytes"]), caption="Front View", use_container_width=True)
 
     with ai_col2:
         st.markdown("#### 🧍‍♂️ Back View")
@@ -808,9 +808,9 @@ elif page == "📐 AI Measurements":
         if back_photo:
             st.session_state["ai_back_bytes"] = back_photo.read()
             st.session_state["ai_back_type"]  = back_photo.type
-            st.image(st.session_state["ai_back_bytes"], caption="Back View", use_container_width=True)
-        elif "ai_back_bytes" in st.session_state:
-            st.image(st.session_state["ai_back_bytes"], caption="Back View (cached)", use_container_width=True)
+            st.image(io.BytesIO(st.session_state["ai_back_bytes"]), caption="Back View", use_container_width=True)
+        elif st.session_state.get("ai_back_bytes"):
+            st.image(io.BytesIO(st.session_state["ai_back_bytes"]), caption="Back View", use_container_width=True)
 
     st.markdown("---")
 

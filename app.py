@@ -308,6 +308,14 @@ if "show_ai_prompt" not in st.session_state:
     st.session_state.show_ai_prompt = False
 if "ai_prompt_pending" not in st.session_state:
     st.session_state.ai_prompt_pending = False
+if "ai_front_bytes" not in st.session_state:
+    st.session_state["ai_front_bytes"] = None
+if "ai_back_bytes" not in st.session_state:
+    st.session_state["ai_back_bytes"] = None
+if "ai_front_type" not in st.session_state:
+    st.session_state["ai_front_type"] = "image/jpeg"
+if "ai_back_type" not in st.session_state:
+    st.session_state["ai_back_type"] = "image/jpeg"
 
 # ── CUSTOM CSS ───────────────────────────────────────────────
 st.markdown(f"""
@@ -783,7 +791,11 @@ elif page == "📐 AI Measurements":
             label_visibility="collapsed"
         )
         if front_photo:
-            st.image(front_photo, caption="Front View", use_container_width=True)
+            st.session_state["ai_front_bytes"] = front_photo.read()
+            st.session_state["ai_front_type"]  = front_photo.type
+            st.image(st.session_state["ai_front_bytes"], caption="Front View", use_container_width=True)
+        elif "ai_front_bytes" in st.session_state:
+            st.image(st.session_state["ai_front_bytes"], caption="Front View (cached)", use_container_width=True)
 
     with ai_col2:
         st.markdown("#### 🧍‍♂️ Back View")
@@ -794,7 +806,11 @@ elif page == "📐 AI Measurements":
             label_visibility="collapsed"
         )
         if back_photo:
-            st.image(back_photo, caption="Back View", use_container_width=True)
+            st.session_state["ai_back_bytes"] = back_photo.read()
+            st.session_state["ai_back_type"]  = back_photo.type
+            st.image(st.session_state["ai_back_bytes"], caption="Back View", use_container_width=True)
+        elif "ai_back_bytes" in st.session_state:
+            st.image(st.session_state["ai_back_bytes"], caption="Back View (cached)", use_container_width=True)
 
     st.markdown("---")
 
@@ -805,29 +821,40 @@ elif page == "📐 AI Measurements":
         key="ai_height"
     )
 
-    scan_btn = st.button("🤖 Scan & Estimate Measurements", type="primary", use_container_width=True)
+    btn_col1, btn_col2 = st.columns([3, 1])
+    with btn_col1:
+        scan_btn = st.button("🤖 Scan & Estimate Measurements", type="primary", use_container_width=True)
+    with btn_col2:
+        clear_btn = st.button("🗑️ Clear Photos", use_container_width=True)
+
+    if clear_btn:
+        st.session_state["ai_front_bytes"] = None
+        st.session_state["ai_back_bytes"]  = None
+        st.session_state.pop("ai_measurements", None)
+        st.rerun()
 
     if scan_btn:
-        if not front_photo or not back_photo:
+        has_front = "ai_front_bytes" in st.session_state and st.session_state["ai_front_bytes"]
+        has_back  = "ai_back_bytes"  in st.session_state and st.session_state["ai_back_bytes"]
+
+        if not has_front or not has_back:
             st.error("Please upload both the front and back photos before scanning.")
         else:
             openai_key = _secret("OPENAI_API_KEY")
             if not openai_key:
                 st.error(
-                    "OpenAI API key not found. Add `OPENAI_API_KEY=sk-...` to your `.env` file "
-                    "to enable AI measurement scanning."
+                    "OpenAI API key not found. Add OPENAI_API_KEY to your Streamlit secrets or .env file."
                 )
             else:
                 with st.spinner("🤖 Analysing silhouette… this may take a few seconds…"):
                     try:
                         import httpx
+                        import json
 
-                        def _encode(file_obj) -> str:
-                            file_obj.seek(0)
-                            return base64.b64encode(file_obj.read()).decode("utf-8")
-
-                        front_b64 = _encode(front_photo)
-                        back_b64  = _encode(back_photo)
+                        front_b64 = base64.b64encode(st.session_state["ai_front_bytes"]).decode("utf-8")
+                        back_b64  = base64.b64encode(st.session_state["ai_back_bytes"]).decode("utf-8")
+                        front_type = st.session_state.get("ai_front_type", "image/jpeg")
+                        back_type  = st.session_state.get("ai_back_type",  "image/jpeg")
 
                         height_hint = (
                             f"The customer's height is {ai_height.strip()}. Use this as a scale reference."
@@ -871,14 +898,14 @@ Fill every measurement field with a numeric value (e.g. "42"). Use your best pro
                                         {
                                             "type": "image_url",
                                             "image_url": {
-                                                "url": f"data:{front_photo.type};base64,{front_b64}",
+                                                "url": f"data:{front_type};base64,{front_b64}",
                                                 "detail": "high"
                                             }
                                         },
                                         {
                                             "type": "image_url",
                                             "image_url": {
-                                                "url": f"data:{back_photo.type};base64,{back_b64}",
+                                                "url": f"data:{back_type};base64,{back_b64}",
                                                 "detail": "high"
                                             }
                                         },
@@ -904,21 +931,20 @@ Fill every measurement field with a numeric value (e.g. "42"). Use your best pro
                             raw = re.sub(r"^```[a-z]*\n?", "", raw)
                             raw = re.sub(r"\n?```$", "", raw)
 
-                        import json
                         ai_result = json.loads(raw)
                         st.session_state["ai_measurements"] = ai_result
-                        st.session_state["ai_unit"] = ai_unit
+                        st.session_state["ai_unit_result"]  = ai_unit
+                        st.rerun()
 
                     except httpx.HTTPStatusError as e:
                         st.error(f"OpenAI API error {e.response.status_code}: {e.response.text[:300]}")
-                        ai_result = None
                     except Exception as e:
                         st.error(f"Scan failed: {e}")
-                        ai_result = None
 
     # ── DISPLAY RESULTS ───────────────────────────────────────
     if "ai_measurements" in st.session_state and st.session_state["ai_measurements"]:
-        ai_result = st.session_state["ai_measurements"]
+        ai_result  = st.session_state["ai_measurements"]
+        result_unit = st.session_state.get("ai_unit_result", "cm")
         confidence = ai_result.get("confidence", "medium")
         notes      = ai_result.get("notes", "")
 
@@ -942,7 +968,7 @@ Fill every measurement field with a numeric value (e.g. "42"). Use your best pro
                     f"<div style='display:flex;justify-content:space-between;"
                     f"padding:6px 12px;background:#1E3A6E;border-radius:8px;margin-bottom:4px;'>"
                     f"<span style='color:#93C5FD;'>{field}</span>"
-                    f"<span style='color:white;font-weight:bold;'>{val} {st.session_state.get('ai_unit','cm')}</span>"
+                    f"<span style='color:white;font-weight:bold;'>{val} {result_unit}</span>"
                     f"</div>",
                     unsafe_allow_html=True
                 )
@@ -955,7 +981,7 @@ Fill every measurement field with a numeric value (e.g. "42"). Use your best pro
                     f"<div style='display:flex;justify-content:space-between;"
                     f"padding:6px 12px;background:#1E3A6E;border-radius:8px;margin-bottom:4px;'>"
                     f"<span style='color:#93C5FD;'>{field}</span>"
-                    f"<span style='color:white;font-weight:bold;'>{val} {st.session_state.get('ai_unit','cm')}</span>"
+                    f"<span style='color:white;font-weight:bold;'>{val} {result_unit}</span>"
                     f"</div>",
                     unsafe_allow_html=True
                 )
@@ -974,7 +1000,7 @@ Fill every measurement field with a numeric value (e.g. "42"). Use your best pro
                 ais_email = st.text_input("Email Address *", placeholder="customer@example.com")
                 ais_outfit = st.selectbox("Outfit Type", ["Agbada", "Senator", "Suit", "Kaftan"])
                 ais_unit   = st.radio("Unit", ["cm", "inches"], horizontal=True,
-                                      index=0 if st.session_state.get("ai_unit", "cm") == "cm" else 1)
+                                      index=0 if st.session_state.get("ai_unit_result", "cm") == "cm" else 1)
                 ais_submit = st.form_submit_button("💾 Save Order", use_container_width=True)
 
             if ais_submit:

@@ -758,26 +758,25 @@ if st.session_state.just_saved_order:
         st.rerun()
 
 # ════════════════════════════════════════════════════════════
-# PAGE: AI MEASUREMENTS (silhouette scan)
+# PAGE: AI MEASUREMENTS (MediaPipe pose estimation)
 # ════════════════════════════════════════════════════════════
 elif page == "📐 AI Measurements":
     st.subheader("📐 AI Body Measurement Assistant")
     st.markdown(
-        "<p style='color:#93C5FD; text-align:center;'>Upload clear front and back photos of the customer. "
-        "Our AI will analyse the silhouette and suggest body measurements.</p>",
+        "<p style='color:#93C5FD; text-align:center;'>Upload a clear front photo of the customer. "
+        "MediaPipe will detect body landmarks and estimate measurements from your height.</p>",
         unsafe_allow_html=True
     )
 
-    # ── INSTRUCTIONS ─────────────────────────────────────────
     with st.expander("📸 Photo Guidelines", expanded=True):
         st.markdown("""
 **For best results:**
 - Stand straight against a plain, well-lit background
 - Wear form-fitting clothing (no baggy outfits)
 - Arms slightly away from the body
-- Full body visible from head to toe in both shots
-- Front photo: face the camera directly
-- Back photo: turn completely around, same pose
+- Full body visible from head to toe
+- Face the camera directly
+- **Height is required** — it is used as the scale reference for all measurements
         """)
 
     ai_col1, ai_col2 = st.columns(2)
@@ -798,7 +797,7 @@ elif page == "📐 AI Measurements":
             st.image(io.BytesIO(st.session_state["ai_front_bytes"]), caption="Front View", use_container_width=True)
 
     with ai_col2:
-        st.markdown("#### 🧍‍♂️ Back View")
+        st.markdown("#### 🧍\u200d♂️ Back View (optional)")
         back_photo = st.file_uploader(
             "Upload back photo",
             type=["png", "jpg", "jpeg"],
@@ -814,10 +813,10 @@ elif page == "📐 AI Measurements":
 
     st.markdown("---")
 
-    ai_unit = st.radio("Preferred measurement unit", ["cm", "inches"], horizontal=True, key="ai_unit")
+    ai_unit   = st.radio("Preferred measurement unit", ["cm", "inches"], horizontal=True, key="ai_unit")
     ai_height = st.text_input(
-        "Customer height (optional — improves accuracy)",
-        placeholder="e.g. 175 cm  or  5ft 9in",
+        "Customer height * (required for accurate measurements)",
+        placeholder="e.g. 175  (just the number, matching the unit selected above)",
         key="ai_height"
     )
 
@@ -831,131 +830,193 @@ elif page == "📐 AI Measurements":
         st.session_state["ai_front_bytes"] = None
         st.session_state["ai_back_bytes"]  = None
         st.session_state.pop("ai_measurements", None)
+        st.session_state.pop("ai_annotated", None)
         st.rerun()
 
     if scan_btn:
-        has_front = "ai_front_bytes" in st.session_state and st.session_state["ai_front_bytes"]
-        has_back  = "ai_back_bytes"  in st.session_state and st.session_state["ai_back_bytes"]
-
-        if not has_front or not has_back:
-            st.error("Please upload both the front and back photos before scanning.")
+        has_front = bool(st.session_state.get("ai_front_bytes"))
+        if not has_front:
+            st.error("Please upload a front photo before scanning.")
+        elif not ai_height.strip():
+            st.error("Height is required — it is used to scale all measurements accurately.")
         else:
-            openai_key = _secret("OPENAI_API_KEY")
-            if not openai_key:
-                st.error(
-                    "OpenAI API key not found. Add OPENAI_API_KEY to your Streamlit secrets or .env file."
-                )
-            else:
-                with st.spinner("🤖 Analysing silhouette… this may take a few seconds…"):
+            try:
+                height_val = float(re.sub(r"[^\d.]", "", ai_height.strip()))
+                height_cm  = height_val if ai_unit == "cm" else height_val * 2.54
+            except ValueError:
+                height_cm = None
+                st.error("Could not parse height. Enter a plain number, e.g. 175")
+
+            if height_cm:
+                with st.spinner("🤖 Detecting body landmarks… please wait…"):
                     try:
-                        import httpx
-                        import json
+                        import urllib.request
+                        import numpy as np
+                        from PIL import Image as PILImage
+                        import mediapipe as mp
+                        from mediapipe.tasks import python as mp_python
+                        from mediapipe.tasks.python import vision as mp_vision
+                        from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
 
-                        front_b64 = base64.b64encode(st.session_state["ai_front_bytes"]).decode("utf-8")
-                        back_b64  = base64.b64encode(st.session_state["ai_back_bytes"]).decode("utf-8")
-                        front_type = st.session_state.get("ai_front_type", "image/jpeg")
-                        back_type  = st.session_state.get("ai_back_type",  "image/jpeg")
-
-                        height_hint = (
-                            f"The customer's height is {ai_height.strip()}. Use this as a scale reference."
-                            if ai_height.strip() else
-                            "No height reference was provided; give your best estimate."
+                        # ── Download model if not present ──────────────
+                        MODEL_PATH = os.path.join(BASE_DIR, "pose_landmarker.task")
+                        MODEL_URL  = (
+                            "https://storage.googleapis.com/mediapipe-models/"
+                            "pose_landmarker/pose_landmarker_heavy/float16/latest/"
+                            "pose_landmarker_heavy.task"
                         )
+                        if not os.path.exists(MODEL_PATH):
+                            with st.spinner("📥 Downloading pose model (one-time, ~25 MB)…"):
+                                urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
-                        prompt = f"""You are an expert tailor's assistant. Analyse the two photos of the same person — one front view and one back view — and estimate their body measurements in {ai_unit}.
+                        # ── Load image ─────────────────────────────────
+                        pil_img    = PILImage.open(io.BytesIO(st.session_state["ai_front_bytes"])).convert("RGB")
+                        img_w_px, img_h_px = pil_img.size
+                        img_np     = np.array(pil_img)
+                        mp_image   = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_np)
 
-{height_hint}
+                        # ── Run pose landmarker ────────────────────────
+                        options = PoseLandmarkerOptions(
+                            base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
+                            running_mode=RunningMode.IMAGE,
+                            num_poses=1,
+                            min_pose_detection_confidence=0.5,
+                            min_pose_presence_confidence=0.5,
+                            min_tracking_confidence=0.5,
+                        )
+                        with PoseLandmarker.create_from_options(options) as landmarker:
+                            result = landmarker.detect(mp_image)
 
-Return ONLY a JSON object with these exact keys (no extra text, no markdown fences):
-{{
-  "Chest": "",
-  "Stomach": "",
-  "Shoulder": "",
-  "Sleeve Length": "",
-  "Neck": "",
-  "Round Sleeve": "",
-  "Top Length": "",
-  "Trouser Length": "",
-  "Trouser-waist": "",
-  "Hips": "",
-  "Laps": "",
-  "Knee": "",
-  "Ankle": "",
-  "confidence": "low | medium | high",
-  "notes": "any caveats or assumptions"
-}}
+                        if not result.pose_landmarks or len(result.pose_landmarks) == 0:
+                            st.error(
+                                "Could not detect a person in the photo. "
+                                "Make sure the full body is visible against a plain background."
+                            )
+                        else:
+                            lm = result.pose_landmarks[0]  # list of NormalizedLandmark
 
-Fill every measurement field with a numeric value (e.g. "42"). Use your best professional estimate based on body proportions visible in the photos."""
+                            # Landmark indices (same as classic API)
+                            # 0=nose 7=L_ear 8=R_ear 11=L_shoulder 12=R_shoulder
+                            # 13=L_elbow 14=R_elbow 15=L_wrist 16=R_wrist
+                            # 23=L_hip 24=R_hip 25=L_knee 26=R_knee 27=L_ankle 28=R_ankle
+                            IDX = {
+                                "NOSE":          0,  "LEFT_EAR": 7,  "RIGHT_EAR": 8,
+                                "LEFT_SHOULDER": 11, "RIGHT_SHOULDER": 12,
+                                "LEFT_ELBOW":    13, "RIGHT_ELBOW":    14,
+                                "LEFT_WRIST":    15, "RIGHT_WRIST":    16,
+                                "LEFT_HIP":      23, "RIGHT_HIP":      24,
+                                "LEFT_KNEE":     25, "RIGHT_KNEE":     26,
+                                "LEFT_ANKLE":    27, "RIGHT_ANKLE":    28,
+                            }
 
-                        payload = {
-                            "model": "gpt-4o",
-                            "max_tokens": 600,
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": prompt},
-                                        {
-                                            "type": "image_url",
-                                            "image_url": {
-                                                "url": f"data:{front_type};base64,{front_b64}",
-                                                "detail": "high"
-                                            }
-                                        },
-                                        {
-                                            "type": "image_url",
-                                            "image_url": {
-                                                "url": f"data:{back_type};base64,{back_b64}",
-                                                "detail": "high"
-                                            }
-                                        },
-                                    ]
-                                }
+                            def lx(name): return lm[IDX[name]].x
+                            def ly(name): return lm[IDX[name]].y
+
+                            def horiz(a, b): return abs(lx(a) - lx(b)) * img_w_px
+                            def vert(a, b):  return abs(ly(a) - ly(b)) * img_h_px
+                            def euc(a, b):
+                                dx = (lx(a) - lx(b)) * img_w_px
+                                dy = (ly(a) - ly(b)) * img_h_px
+                                return (dx**2 + dy**2) ** 0.5
+
+                            # Scale factor
+                            nose_y_px  = ly("NOSE")   * img_h_px
+                            ankle_y_px = ((ly("LEFT_ANKLE") + ly("RIGHT_ANKLE")) / 2) * img_h_px
+                            span_px    = abs(ankle_y_px - nose_y_px) / 0.92
+                            ppcm       = span_px / height_cm
+
+                            def cm(px):  return px / ppcm
+                            def fmt(v):  return f"{v:.1f}" if ai_unit == "cm" else f"{v/2.54:.1f}"
+
+                            shoulder_w = cm(horiz("LEFT_SHOULDER", "RIGHT_SHOULDER"))
+                            hip_w      = cm(horiz("LEFT_HIP",      "RIGHT_HIP"))
+                            ear_w      = cm(horiz("LEFT_EAR",      "RIGHT_EAR"))
+
+                            chest_cm_val        = shoulder_w * 0.85 * 3.14159 * 0.95
+                            stomach_cm_val      = hip_w      * 0.85 * 3.14159 * 0.95
+                            hip_circ_cm         = hip_w             * 3.14159 * 0.98
+                            neck_cm_val         = ear_w      * 0.85 * 3.14159
+                            round_sleeve_cm_val = shoulder_w * 0.30 * 3.14159 * 0.90
+
+                            sleeve_cm_val = cm(
+                                euc("LEFT_SHOULDER", "LEFT_ELBOW") +
+                                euc("LEFT_ELBOW",    "LEFT_WRIST")
+                            )
+                            top_len_cm_val   = cm(vert("LEFT_SHOULDER", "LEFT_HIP"))
+                            trouser_cm_val   = cm(vert("LEFT_HIP",      "LEFT_ANKLE"))
+                            trouser_w_cm_val = stomach_cm_val * 1.02
+                            laps_cm_val      = cm(horiz("LEFT_HIP",   "LEFT_KNEE")  * 0.6) * 3.14159 * 0.95
+                            knee_cm_val      = cm(euc("LEFT_KNEE",  "RIGHT_KNEE")   * 0.35) * 3.14159 * 0.90
+                            ankle_cm_val     = cm(euc("LEFT_ANKLE", "RIGHT_ANKLE")  * 0.30) * 3.14159 * 0.85
+
+                            # ── Draw landmarks on image ────────────────
+                            annotated = img_np.copy()
+                            CONNECTIONS = [
+                                ("LEFT_SHOULDER","RIGHT_SHOULDER"),("LEFT_SHOULDER","LEFT_ELBOW"),
+                                ("LEFT_ELBOW","LEFT_WRIST"),("RIGHT_SHOULDER","RIGHT_ELBOW"),
+                                ("RIGHT_ELBOW","RIGHT_WRIST"),("LEFT_SHOULDER","LEFT_HIP"),
+                                ("RIGHT_SHOULDER","RIGHT_HIP"),("LEFT_HIP","RIGHT_HIP"),
+                                ("LEFT_HIP","LEFT_KNEE"),("LEFT_KNEE","LEFT_ANKLE"),
+                                ("RIGHT_HIP","RIGHT_KNEE"),("RIGHT_KNEE","RIGHT_ANKLE"),
                             ]
-                        }
+                            import cv2
+                            for a, b in CONNECTIONS:
+                                pt1 = (int(lx(a)*img_w_px), int(ly(a)*img_h_px))
+                                pt2 = (int(lx(b)*img_w_px), int(ly(b)*img_h_px))
+                                cv2.line(annotated, pt1, pt2, (147, 197, 253), 2)
+                            for name in IDX:
+                                pt = (int(lx(name)*img_w_px), int(ly(name)*img_h_px))
+                                cv2.circle(annotated, pt, 4, (37, 99, 235), -1)
 
-                        resp = httpx.post(
-                            "https://api.openai.com/v1/chat/completions",
-                            headers={
-                                "Authorization": f"Bearer {openai_key}",
-                                "Content-Type": "application/json"
-                            },
-                            json=payload,
-                            timeout=60
-                        )
-                        resp.raise_for_status()
-                        raw = resp.json()["choices"][0]["message"]["content"].strip()
+                            st.session_state["ai_annotated"] = annotated
+                            st.session_state["ai_measurements"] = {
+                                "Chest":          fmt(chest_cm_val),
+                                "Stomach":        fmt(stomach_cm_val),
+                                "Shoulder":       fmt(shoulder_w),
+                                "Sleeve Length":  fmt(sleeve_cm_val),
+                                "Neck":           fmt(neck_cm_val),
+                                "Round Sleeve":   fmt(round_sleeve_cm_val),
+                                "Top Length":     fmt(top_len_cm_val),
+                                "Trouser Length": fmt(trouser_cm_val),
+                                "Trouser-waist":  fmt(trouser_w_cm_val),
+                                "Hips":           fmt(hip_circ_cm),
+                                "Laps":           fmt(laps_cm_val),
+                                "Knee":           fmt(knee_cm_val),
+                                "Ankle":          fmt(ankle_cm_val),
+                                "confidence": "medium",
+                                "notes": (
+                                    "Estimated from MediaPipe pose landmarks. "
+                                    "Circumference values use anatomical ratio approximations. "
+                                    "Always verify with a tape measure before cutting."
+                                )
+                            }
+                            st.session_state["ai_unit_result"] = ai_unit
+                            st.rerun()
 
-                        # Strip markdown fences if model adds them anyway
-                        if raw.startswith("```"):
-                            raw = re.sub(r"^```[a-z]*\n?", "", raw)
-                            raw = re.sub(r"\n?```$", "", raw)
-
-                        ai_result = json.loads(raw)
-                        st.session_state["ai_measurements"] = ai_result
-                        st.session_state["ai_unit_result"]  = ai_unit
-                        st.rerun()
-
-                    except httpx.HTTPStatusError as e:
-                        st.error(f"OpenAI API error {e.response.status_code}: {e.response.text[:300]}")
+                    except ImportError as e:
+                        st.error(f"Missing dependency: {e}. Make sure mediapipe and opencv-python are in requirements.txt.")
                     except Exception as e:
                         st.error(f"Scan failed: {e}")
 
     # ── DISPLAY RESULTS ───────────────────────────────────────
     if "ai_measurements" in st.session_state and st.session_state["ai_measurements"]:
-        ai_result  = st.session_state["ai_measurements"]
+        ai_result   = st.session_state["ai_measurements"]
         result_unit = st.session_state.get("ai_unit_result", "cm")
-        confidence = ai_result.get("confidence", "medium")
-        notes      = ai_result.get("notes", "")
+        confidence  = ai_result.get("confidence", "medium")
+        notes       = ai_result.get("notes", "")
+
+        if "ai_annotated" in st.session_state:
+            st.markdown("#### 🦴 Detected Landmarks")
+            st.image(st.session_state["ai_annotated"], caption="Pose landmarks detected", use_container_width=True)
 
         conf_color = {"high": "#10B981", "medium": "#F59E0B", "low": "#EF4444"}.get(confidence, "#F59E0B")
         st.markdown(
             f"<p style='color:{conf_color}; font-weight:bold; text-align:center;'>"
-            f"AI Confidence: {confidence.upper()}</p>",
+            f"Confidence: {confidence.upper()}</p>",
             unsafe_allow_html=True
         )
         if notes:
-            st.info(f"💬 AI notes: {notes}")
+            st.info(f"💬 {notes}")
 
         st.markdown("#### 📏 Estimated Measurements")
         res_col1, res_col2 = st.columns(2)
@@ -992,12 +1053,11 @@ Fill every measurement field with a numeric value (e.g. "42"). Use your best pro
             "or use the form below to save them directly to a new order."
         )
 
-        # ── QUICK-SAVE TO NEW ORDER ───────────────────────────
         with st.expander("💾 Save AI Measurements as New Order", expanded=False):
             with st.form("ai_save_form"):
-                ais_name  = st.text_input("Customer Name *")
-                ais_phone = st.text_input("Phone Number *")
-                ais_email = st.text_input("Email Address *", placeholder="customer@example.com")
+                ais_name   = st.text_input("Customer Name *")
+                ais_phone  = st.text_input("Phone Number *")
+                ais_email  = st.text_input("Email Address *", placeholder="customer@example.com")
                 ais_outfit = st.selectbox("Outfit Type", ["Agbada", "Senator", "Suit", "Kaftan"])
                 ais_unit   = st.radio("Unit", ["cm", "inches"], horizontal=True,
                                       index=0 if st.session_state.get("ai_unit_result", "cm") == "cm" else 1)
@@ -1034,7 +1094,7 @@ Fill every measurement field with a numeric value (e.g. "42"). Use your best pro
                         "Amount Paid":            0,
                         "Receipt File":           "",
                         "Design Photo":           "",
-                        "Customer Notes":         f"Measurements estimated by AI (confidence: {confidence})",
+                        "Customer Notes":         f"Measurements estimated by MediaPipe AI (confidence: {confidence})",
                         **meas
                     }
                     save_data(data)
@@ -1047,9 +1107,8 @@ Fill every measurement field with a numeric value (e.g. "42"). Use your best pro
                     else:
                         st.warning(f"📧 Email not sent: {msg}")
 
-                    # Clear cached AI result
                     del st.session_state["ai_measurements"]
-
+                    st.session_state.pop("ai_annotated", None)
 # ════════════════════════════════════════════════════════════
 # PAGE: ORDER TRACKING (public)
 # ════════════════════════════════════════════════════════════

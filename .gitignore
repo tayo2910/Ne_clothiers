@@ -8,3 +8,4 @@ NE_Clothiers_measurements.csv
 NE_Clothiers_measurements.xlsx
 secrets.toml
 .streamlit/secrets.toml
+pose_landmarker.task

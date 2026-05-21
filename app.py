@@ -836,9 +836,9 @@ elif page == "📐 AI Measurements":
         if front_photo:
             st.session_state["ai_front_bytes"] = front_photo.read()
             st.session_state["ai_front_type"]  = front_photo.type
-            st.image(io.BytesIO(st.session_state["ai_front_bytes"]), caption="Front View", use_container_width=True)
+            st.image(io.BytesIO(st.session_state["ai_front_bytes"]), caption="Front View", width=True)
         elif st.session_state.get("ai_front_bytes"):
-            st.image(io.BytesIO(st.session_state["ai_front_bytes"]), caption="Front View", use_container_width=True)
+            st.image(io.BytesIO(st.session_state["ai_front_bytes"]), caption="Front View", width=True)
 
     with ai_col2:
         st.markdown("#### 🧍\u200d♂️ Back View (optional)")
@@ -851,9 +851,9 @@ elif page == "📐 AI Measurements":
         if back_photo:
             st.session_state["ai_back_bytes"] = back_photo.read()
             st.session_state["ai_back_type"]  = back_photo.type
-            st.image(io.BytesIO(st.session_state["ai_back_bytes"]), caption="Back View", use_container_width=True)
+            st.image(io.BytesIO(st.session_state["ai_back_bytes"]), caption="Back View", width=True)
         elif st.session_state.get("ai_back_bytes"):
-            st.image(io.BytesIO(st.session_state["ai_back_bytes"]), caption="Back View", use_container_width=True)
+            st.image(io.BytesIO(st.session_state["ai_back_bytes"]), caption="Back View", width=True)
 
     st.markdown("---")
 
@@ -1051,7 +1051,7 @@ elif page == "📐 AI Measurements":
 
         if "ai_annotated" in st.session_state:
             st.markdown("#### 🦴 Detected Landmarks")
-            st.image(st.session_state["ai_annotated"], caption="Pose landmarks detected", use_container_width=True)
+            st.image(st.session_state["ai_annotated"], caption="Pose landmarks detected", width=True)
 
         conf_color = {"high": "#10B981", "medium": "#F59E0B", "low": "#EF4444"}.get(confidence, "#F59E0B")
         st.markdown(

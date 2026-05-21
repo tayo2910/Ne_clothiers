@@ -34,21 +34,16 @@ CARD_COLOR    = "#1E3A6E"
 TEXT_COLOR    = "#FFFFFF"
 
 # ── CONFIG ───────────────────────────────────────────────────
-FILE_NAME      = "NE_Clothiers_measurements.csv"
 IMAGE_FOLDER   = "customer_images"
 RECEIPT_FOLDER = "receipts"
 OUTFIT_FOLDER  = "outfit_images"
 
-# Base directory — resolves correctly on both localhost and Streamlit Cloud
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Map outfit types to their preview images
-OUTFIT_IMAGES = {
-    "Agbada":  os.path.join(BASE_DIR, OUTFIT_FOLDER, "agbada.jpg"),
-    "Senator": os.path.join(BASE_DIR, OUTFIT_FOLDER, "senator.jpg"),
-    "Suit":    os.path.join(BASE_DIR, OUTFIT_FOLDER, "suit.jpg"),
-    "Kaftan":  os.path.join(BASE_DIR, OUTFIT_FOLDER, "kaftan.jpg"),
-}
+# On Streamlit Cloud the project root is read-only; use /tmp for uploads
+_WRITABLE = "/tmp" if not os.access(os.path.dirname(os.path.abspath(__file__)), os.W_OK) else os.path.dirname(os.path.abspath(__file__))
+IMAGE_FOLDER_PATH   = os.path.join(_WRITABLE, IMAGE_FOLDER)
+RECEIPT_FOLDER_PATH = os.path.join(_WRITABLE, RECEIPT_FOLDER)
+os.makedirs(IMAGE_FOLDER_PATH,   exist_ok=True)
+os.makedirs(RECEIPT_FOLDER_PATH, exist_ok=True)
 
 def _secret(key: str, default: str = "") -> str:
     """Read from env first, then Streamlit secrets, then default."""
@@ -63,8 +58,27 @@ def _secret(key: str, default: str = "") -> str:
 ADMIN_USERNAME = _secret("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = _secret("ADMIN_PASSWORD", "nedee123")
 
-os.makedirs(IMAGE_FOLDER, exist_ok=True)
-os.makedirs(RECEIPT_FOLDER, exist_ok=True)
+# ── BASE DIR & OUTFIT IMAGES ─────────────────────────────────
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+OUTFIT_IMAGES = {
+    "Agbada":  os.path.join(BASE_DIR, OUTFIT_FOLDER, "agbada.jpg"),
+    "Senator": os.path.join(BASE_DIR, OUTFIT_FOLDER, "senator.jpg"),
+    "Suit":    os.path.join(BASE_DIR, OUTFIT_FOLDER, "suit.jpg"),
+    "Kaftan":  os.path.join(BASE_DIR, OUTFIT_FOLDER, "kaftan.jpg"),
+}
+
+# ── SUPABASE CLIENT ───────────────────────────────────────────
+@st.cache_resource
+def get_supabase():
+    from supabase import create_client
+    url = _secret("SUPABASE_URL")
+    key = _secret("SUPABASE_KEY")
+    if not url or not key:
+        raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in secrets.")
+    return create_client(url, key)
+
+TABLE = "customers"
 
 # ── FIELDS ───────────────────────────────────────────────────
 FIELDS = [
@@ -82,44 +96,76 @@ UPPER_BODY = ["Chest", "Stomach", "Shoulder", "Sleeve Length",
               "Neck", "Round Sleeve", "Top Length"]
 LOWER_BODY = ["Trouser Length", "Trouser-waist", "Hips", "Laps", "Knee", "Ankle"]
 
-# ── HELPERS ──────────────────────────────────────────────────
-def ensure_file():
-    if not os.path.exists(FILE_NAME):
-        pd.DataFrame(columns=FIELDS).to_csv(FILE_NAME, index=False)
-
-
-@st.cache_data
+# ── DATA HELPERS (Supabase) ───────────────────────────────────
+@st.cache_data(ttl=30)
 def load_data() -> pd.DataFrame:
-    ensure_file()
-    df = pd.read_csv(FILE_NAME, dtype=str)
-    for col in FIELDS:
-        if col not in df.columns:
-            df[col] = ""
-    df = df.fillna("")
-    return df
+    """Fetch all orders from Supabase and return as a DataFrame."""
+    try:
+        sb   = get_supabase()
+        rows = sb.table(TABLE).select("*").order("created_at", desc=False).execute().data
+        if not rows:
+            return pd.DataFrame(columns=FIELDS)
+        df = pd.DataFrame(rows)
+        # Build reverse map: supabase_col → Display Name
+        reverse = {_col(f): f for f in FIELDS}
+        df = df.rename(columns=reverse)
+        for col in FIELDS:
+            if col not in df.columns:
+                df[col] = ""
+        # Keep only app fields; fill nulls with "" for text, 0 for numeric
+        df = df[FIELDS]
+        numeric_fields = UPPER_BODY + LOWER_BODY + ["Amount Paid"]
+        for col in numeric_fields:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        text_fields = [f for f in FIELDS if f not in numeric_fields]
+        df[text_fields] = df[text_fields].fillna("").astype(str)
+        return df
+    except Exception as e:
+        st.error(f"Failed to load data: {e}")
+        return pd.DataFrame(columns=FIELDS)
 
 
 def save_data(data: dict):
-    df = load_data()
-    df = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
-    df.to_csv(FILE_NAME, index=False)
+    """Insert a new order into Supabase."""
+    sb  = get_supabase()
+    row = _cast_row({_col(k): v for k, v in data.items()})
+    sb.table(TABLE).insert(row).execute()
     st.cache_data.clear()
 
 
-def update_record(index: int, data: dict):
-    df = load_data()
-    for key, value in data.items():
-        df[key] = df[key].astype(str)   # ensure column is string before assignment
-        df.at[index, key] = str(value)
-    df.to_csv(FILE_NAME, index=False)
+def update_record(order_id: str, data: dict):
+    """Update an existing order in Supabase by Order ID."""
+    sb  = get_supabase()
+    row = _cast_row({_col(k): v for k, v in data.items()})
+    sb.table(TABLE).update(row).eq("order_id", order_id).execute()
     st.cache_data.clear()
 
 
-def delete_record(index: int):
-    df = load_data()
-    df = df.drop(index=index).reset_index(drop=True)
-    df.to_csv(FILE_NAME, index=False)
+def delete_record(order_id: str):
+    """Delete an order from Supabase by Order ID."""
+    sb = get_supabase()
+    sb.table(TABLE).delete().eq("order_id", order_id).execute()
     st.cache_data.clear()
+
+
+def _col(display_name: str) -> str:
+    """Convert display field name to Supabase column name."""
+    return display_name.lower().replace(" ", "_").replace("-", "_")
+
+
+def _cast_row(row: dict) -> dict:
+    """Cast measurement fields to float and other fields to correct types."""
+    numeric_fields = {_col(f) for f in (UPPER_BODY + LOWER_BODY)} | {"amount_paid"}
+    result = {}
+    for k, v in row.items():
+        if k in numeric_fields:
+            try:
+                result[k] = float(v) if v not in ("", None) else None
+            except (ValueError, TypeError):
+                result[k] = None
+        else:
+            result[k] = v
+    return result
 
 
 def validate_phone(phone: str) -> bool:
@@ -231,7 +277,7 @@ def send_order_confirmation_email(record: dict) -> tuple[bool, str]:
     sender   = _get("EMAIL_SENDER")
     password = _get("EMAIL_PASSWORD").replace(" ", "")
     host     = _get("EMAIL_SMTP_HOST", "smtp.gmail.com")
-    port     = int(_get("EMAIL_SMTP_PORT", "587") or 587)
+    port     = int(_get("EMAIL_SMTP_PORT", "465") or 465)
 
     if not sender or not password:
         return False, "Email credentials not configured in .env (EMAIL_SENDER / EMAIL_PASSWORD)."
@@ -278,9 +324,7 @@ NE Clothiers Team"""
         )
         msg.attach(part)
 
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
+        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
             server.ehlo()
             server.login(sender, password)
             server.sendmail(sender, recipient, msg.as_string())
@@ -558,7 +602,7 @@ if page == "🔐 Admin":
                         save_edit = st.form_submit_button("💾 Save Changes")
 
                     if save_edit:
-                        update_record(sel_idx, {
+                        update_record(str(sel_row.get("Order ID", "")), {
                             "Name":           e_name,
                             "Phone":          e_phone,
                             "Outfit Type":    e_outfit,
@@ -574,7 +618,7 @@ if page == "🔐 Admin":
                     confirm = st.text_input("Type the customer name to confirm")
                     if st.button("🗑️ Confirm Delete", type="primary"):
                         if confirm.strip().lower() == str(sel_row.get("Name", "")).strip().lower():
-                            delete_record(sel_idx)
+                            delete_record(str(sel_row.get("Order ID", "")))
                             st.success("Record deleted.")
                             st.rerun()
                         else:
@@ -713,7 +757,7 @@ elif page == "📋 New Measurement":
             design_filename = ""
             if design_photo is not None:
                 design_filename = design_photo.name
-                with open(os.path.join(IMAGE_FOLDER, design_filename), "wb") as f:
+                with open(os.path.join(IMAGE_FOLDER_PATH, design_filename), "wb") as f:
                     f.write(design_photo.getbuffer())
 
             data = {
@@ -1251,28 +1295,29 @@ elif page == "🔍 Order Tracking":
                 if match.empty:
                     st.error(f"No order found with ID **{od_order_id.strip()}**. Please check and try again.")
                 else:
-                    record_idx = match.index[0]
-
+                    matched_order_id = od_order_id.strip().upper()
+                    record_idx       = match.index[0]
                     receipt_filename = str(df_check.at[record_idx, "Receipt File"] or "")
 
                     if od_receipt is not None:
                         receipt_filename = od_receipt.name
-                        with open(os.path.join(RECEIPT_FOLDER, receipt_filename), "wb") as f:
+                        with open(os.path.join(RECEIPT_FOLDER_PATH, receipt_filename), "wb") as f:
                             f.write(od_receipt.getbuffer())
 
-                    update_record(record_idx, {
+                    update_record(matched_order_id, {
                         "Expected Delivery Date": str(od_delivery),
                         "Amount Paid":            od_amount,
                         "Customer Notes":         od_notes,
                         "Receipt File":           receipt_filename,
                     })
 
-                    st.success(f"✅ Order details updated for **{od_order_id.strip().upper()}**!")
+                    st.success(f"✅ Order details updated for **{matched_order_id}**!")
                     st.info(f"Delivery: {od_delivery} | ₦{od_amount:,.0f}")
 
                     # Send updated order confirmation email to customer
-                    updated_df = load_data()
-                    updated_record = updated_df.loc[record_idx].to_dict()
+                    updated_df     = load_data()
+                    updated_match  = updated_df[updated_df["Order ID"].astype(str).str.upper() == matched_order_id]
+                    updated_record = updated_match.iloc[0].to_dict() if not updated_match.empty else {}
                     ok, msg = send_order_confirmation_email(updated_record)
                     if ok:
                         st.success(f"📧 {msg}")
@@ -1283,7 +1328,7 @@ elif page == "🔍 Order Tracking":
                     st.session_state.ai_prompt_pending = True
 
     # ── THANK-YOU CARD (shown after order details are submitted) ──
-    if st.session_state.just_submitted_order or st.session_state.show_ai_prompt:
+    if st.session_state.just_submitted_order:
         st.session_state.just_submitted_order = False
         st.markdown("""
         <div style="
@@ -1306,7 +1351,7 @@ elif page == "🔍 Order Tracking":
         """, unsafe_allow_html=True)
 
     # ── EMPTY STATE (only when no submission is pending) ─────
-    if not search_query.strip() and not st.session_state.show_ai_prompt and not st.session_state.just_submitted_order:
+    if not search_query.strip() and not st.session_state.show_ai_prompt:
         st.markdown("""
         <div style="
             background-color: #1E3A6E;

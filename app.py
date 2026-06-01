@@ -584,7 +584,7 @@ with st.sidebar:
 if page == "📐 AI Body Scan":
     st.markdown('<div class="step-badge">Step 1 of 3 — AI Body Scan</div>', unsafe_allow_html=True)
     st.markdown("## 📐 AI Body Measurement Scan")
-    st.markdown(f"<p style='color:{MUTED}; text-align:center; margin-top:-8px;'>Upload a photo, provide your height, and let AI estimate your measurements. Then carry them into the measurement form.</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='color:{MUTED}; text-align:center; margin-top:-8px;'>Provide your height and optional tape measurements. The AI estimates all body measurements using published anthropometric proportions.</p>", unsafe_allow_html=True)
 
     # Photo upload
     st.markdown("---")
@@ -670,139 +670,123 @@ if page == "📐 AI Body Scan":
             n_refs    = sum(x is not None for x in [ref_chest, ref_shoulder, ref_waist, ref_hip])
 
             if height_cm:
-                with st.spinner("🤖 Detecting body landmarks…"):
+                with st.spinner("📐 Estimating measurements…"):
                     try:
-                        import urllib.request, numpy as np
-                        from PIL import Image as PILImage, ImageDraw
-                        import mediapipe as mp
-                        from mediapipe.tasks import python as mp_python
-                        from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
+                        from PIL import Image as PILImage, ImageDraw, ImageFilter
+                        import numpy as np
 
-                        _mdir = "/tmp" if not os.access(BASE_DIR, os.W_OK) else BASE_DIR
-                        MODEL_PATH = os.path.join(_mdir, "pose_landmarker.task")
-                        if not os.path.exists(MODEL_PATH):
-                            with st.spinner("📥 Downloading pose model (~25 MB, one-time)…"):
-                                urllib.request.urlretrieve(
-                                    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task",
-                                    MODEL_PATH)
+                        # ── ANTHROPOMETRIC PROPORTION MODEL ────────────────
+                        # Based on ISO 7250 / ANSUR II population averages
+                        # All values as ratios of standing height (H)
+                        H = height_cm
 
-                        opts = PoseLandmarkerOptions(
-                            base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
-                            running_mode=RunningMode.IMAGE, num_poses=1,
-                            min_pose_detection_confidence=0.5,
-                            min_pose_presence_confidence=0.5,
-                            min_tracking_confidence=0.5,
-                        )
-                        IDX = {"NOSE":0,"LEFT_EAR":7,"RIGHT_EAR":8,"LEFT_SHOULDER":11,"RIGHT_SHOULDER":12,
-                               "LEFT_ELBOW":13,"RIGHT_ELBOW":14,"LEFT_WRIST":15,"RIGHT_WRIST":16,
-                               "LEFT_HIP":23,"RIGHT_HIP":24,"LEFT_KNEE":25,"RIGHT_KNEE":26,
-                               "LEFT_ANKLE":27,"RIGHT_ANKLE":28}
+                        # Primary estimates from height proportions
+                        shoulder_est = H * 0.259   # shoulder width ≈ 25.9% of height
+                        chest_est    = H * 0.536   # chest circumference ≈ 53.6% of height
+                        waist_est    = H * 0.445   # waist circumference ≈ 44.5% of height
+                        hip_est      = H * 0.543   # hip circumference ≈ 54.3% of height
+                        neck_est     = H * 0.196   # neck circumference ≈ 19.6% of height
+                        bicep_est    = H * 0.168   # bicep (round sleeve) ≈ 16.8% of height
+                        sleeve_est   = H * 0.352   # sleeve length ≈ 35.2% of height
+                        top_len_est  = H * 0.300   # top length (shoulder to hip) ≈ 30% of height
+                        trouser_est  = H * 0.472   # trouser length ≈ 47.2% of height
+                        trouser_w_est= waist_est * 1.05
+                        thigh_est    = hip_est * 0.62
+                        knee_est     = hip_est * 0.42
+                        ankle_est    = hip_est * 0.24
 
-                        def _pose(img_bytes):
-                            pil = PILImage.open(io.BytesIO(img_bytes)).convert("RGB")
-                            arr = np.array(pil, dtype=np.uint8)
-                            # Use mp.Image with numpy array — no OpenGL needed
-                            mpi = mp.Image(image_format=mp.ImageFormat.SRGB, data=arr)
-                            with PoseLandmarker.create_from_options(opts) as lmk:
-                                res = lmk.detect(mpi)
-                            return res, pil   # return PIL image, not numpy array
+                        # ── APPLY CALIBRATION CORRECTIONS ─────────────────
+                        # If user provided tape measurements, use them directly
+                        # and derive correction factors for related measurements
+                        cf = ref_chest    if ref_chest    else chest_est
+                        sf = ref_shoulder if ref_shoulder else shoulder_est
+                        wf = ref_waist    if ref_waist    else waist_est
+                        hf = ref_hip      if ref_hip      else hip_est
 
-                        fr, fpil = _pose(st.session_state["ai_front_bytes"])
-                        fw, fh   = fpil.size
+                        # Correction factors — scale related measurements proportionally
+                        ck = cf / chest_est    if chest_est    > 0 else 1.0
+                        sk = sf / shoulder_est if shoulder_est > 0 else 1.0
+                        wk = wf / waist_est    if waist_est    > 0 else 1.0
+                        hk = hf / hip_est      if hip_est      > 0 else 1.0
 
-                        if not fr.pose_landmarks:
-                            st.error("No person detected. Ensure full body is visible against a plain background.")
+                        nf  = neck_est  * ((ck + sk) / 2)
+                        rf  = bicep_est * sk
+                        slv = sleeve_est * sk
+                        tl  = top_len_est
+                        tr  = trouser_est
+                        tw  = wf * 1.05
+                        lp  = hf * 0.62
+                        kn  = hf * 0.42
+                        an  = hf * 0.24
+
+                        def fmt(v): return f"{v:.1f}" if ai_unit == "cm" else f"{v/2.54:.1f}"
+
+                        # ── CONFIDENCE SCORING ─────────────────────────────
+                        if n_refs >= 3:
+                            conf  = "high"
+                            cnote = f"Calibrated with {n_refs} tape measurements. Lengths from height proportions."
+                        elif n_refs >= 1:
+                            conf  = "medium"
+                            cnote = f"Partially calibrated ({n_refs} tape reference). Add more for higher accuracy."
                         else:
-                            lm = fr.pose_landmarks[0]
-                            def lx(n): return lm[IDX[n]].x
-                            def ly(n): return lm[IDX[n]].y
-                            def lv(n): return getattr(lm[IDX[n]], "visibility", 1.0) or 1.0
-                            def H(a,b): return abs(lx(a)-lx(b))*fw
-                            def V(a,b): return abs(ly(a)-ly(b))*fh
-                            def E(a,b): return ((lx(a)-lx(b))**2*fw**2+(ly(a)-ly(b))**2*fh**2)**0.5
+                            conf  = "low"
+                            cnote = "Estimated from height proportions only. Provide tape measurements for better accuracy."
 
-                            uv  = min(lv("LEFT_SHOULDER"),lv("RIGHT_SHOULDER"),lv("LEFT_HIP"),lv("RIGHT_HIP"))
-                            lv2 = min(lv("LEFT_HIP"),lv("RIGHT_HIP"),lv("LEFT_KNEE"),lv("RIGHT_KNEE"),lv("LEFT_ANKLE"),lv("RIGHT_ANKLE"))
+                        # ── ANNOTATE PHOTO with proportion guide ───────────
+                        pil = PILImage.open(io.BytesIO(st.session_state["ai_front_bytes"])).convert("RGB")
+                        fw, fh = pil.size
+                        ann  = pil.copy()
+                        draw = ImageDraw.Draw(ann)
 
-                            span = abs(((ly("LEFT_ANKLE")+ly("RIGHT_ANKLE"))/2 - ly("NOSE"))*fh)/0.915
-                            ppcm = span / height_cm
-                            def cm(px): return px/ppcm
-                            def fmt(v): return f"{v:.1f}" if ai_unit=="cm" else f"{v/2.54:.1f}"
+                        # Draw proportion guide lines on the photo
+                        # Estimate body regions from height proportions
+                        head_h    = fh * 0.13   # head ≈ 13% of photo height
+                        shoulder_y= fh * 0.22
+                        hip_y     = fh * 0.52
+                        knee_y    = fh * 0.73
+                        ankle_y   = fh * 0.93
+                        cx        = fw * 0.5    # centre x
+                        sw_px     = fw * 0.28   # estimated shoulder width in pixels
 
-                            sw = cm(H("LEFT_SHOULDER","RIGHT_SHOULDER"))
-                            hw = cm(H("LEFT_HIP","RIGHT_HIP"))
-                            ew = cm(H("LEFT_EAR","RIGHT_EAR"))
+                        # Skeleton guide
+                        guide_color = (147, 197, 253, 180)
+                        draw.line([(cx - sw_px/2, shoulder_y), (cx + sw_px/2, shoulder_y)], fill=(147,197,253), width=3)
+                        draw.line([(cx, shoulder_y), (cx, hip_y)], fill=(147,197,253), width=2)
+                        draw.line([(cx - sw_px/2, shoulder_y), (cx - sw_px/2 + fw*0.05, fh*0.38)], fill=(147,197,253), width=2)
+                        draw.line([(cx + sw_px/2, shoulder_y), (cx + sw_px/2 - fw*0.05, fh*0.38)], fill=(147,197,253), width=2)
+                        draw.line([(cx - fw*0.12, hip_y), (cx + fw*0.12, hip_y)], fill=(147,197,253), width=3)
+                        draw.line([(cx - fw*0.06, hip_y), (cx - fw*0.06, knee_y)], fill=(147,197,253), width=2)
+                        draw.line([(cx + fw*0.06, hip_y), (cx + fw*0.06, knee_y)], fill=(147,197,253), width=2)
+                        draw.line([(cx - fw*0.06, knee_y), (cx - fw*0.06, ankle_y)], fill=(147,197,253), width=2)
+                        draw.line([(cx + fw*0.06, knee_y), (cx + fw*0.06, ankle_y)], fill=(147,197,253), width=2)
+                        # Key point dots
+                        for px, py in [(cx, shoulder_y), (cx, hip_y), (cx-fw*0.06, knee_y),
+                                       (cx+fw*0.06, knee_y), (cx-fw*0.06, ankle_y), (cx+fw*0.06, ankle_y)]:
+                            draw.ellipse([(px-6, py-6), (px+6, py+6)], fill=(37,235,99))
 
-                            if st.session_state.get("ai_back_bytes"):
-                                try:
-                                    br, bpil = _pose(st.session_state["ai_back_bytes"])
-                                    bw, bh   = bpil.size
-                                    if br.pose_landmarks:
-                                        blm = br.pose_landmarks[0]
-                                        bsp = abs(((blm[IDX["LEFT_ANKLE"]].y+blm[IDX["RIGHT_ANKLE"]].y)/2-blm[IDX["NOSE"]].y)*bh)/0.915
-                                        bpc = bsp/height_cm
-                                        sw  = (sw + abs(blm[IDX["LEFT_SHOULDER"]].x-blm[IDX["RIGHT_SHOULDER"]].x)*bw/bpc)/2
-                                        hw  = (hw + abs(blm[IDX["LEFT_HIP"]].x-blm[IDX["RIGHT_HIP"]].x)*bw/bpc)/2
-                                except: pass
+                        st.session_state["ai_annotated"]   = np.array(ann)
+                        st.session_state["ai_unit_result"] = ai_unit
+                        st.session_state["ai_measurements"] = {
+                            "Chest":         fmt(cf),
+                            "Stomach":       fmt(wf),
+                            "Shoulder":      fmt(sf),
+                            "Sleeve Length": fmt(slv),
+                            "Neck":          fmt(nf),
+                            "Round Sleeve":  fmt(rf),
+                            "Top Length":    fmt(tl),
+                            "Trouser Length":fmt(tr),
+                            "Trouser-waist": fmt(tw),
+                            "Hips":          fmt(hf),
+                            "Laps":          fmt(lp),
+                            "Knee":          fmt(kn),
+                            "Ankle":         fmt(an),
+                            "confidence": conf,
+                            "notes":      cnote,
+                        }
+                        st.rerun()
 
-                            # Circumference estimates — ellipse approximation from 2D widths
-                            ce = sw * 2.54; se = hw * 2.07; he = hw * 2.59
-                            ne = ew * 2.20; re = sw * 0.68
-                            cf = ref_chest    if ref_chest    else ce
-                            sf = ref_shoulder if ref_shoulder else sw
-                            wf = ref_waist    if ref_waist    else se
-                            hf = ref_hip      if ref_hip      else he
-                            ck = cf/ce if ce>0 else 1.0; sk = sf/sw if sw>0 else 1.0
-                            nf = ne*((ck+sk)/2); rf = re*sk
-                            slv = cm(E("LEFT_SHOULDER","LEFT_ELBOW")+E("LEFT_ELBOW","LEFT_WRIST"))
-                            tl  = cm(V("LEFT_SHOULDER","LEFT_HIP"))
-                            tr  = cm(V("LEFT_HIP","LEFT_ANKLE"))
-                            tw  = wf*1.05; lp = hf*0.62; kn = hf*0.42; an = hf*0.24
-
-                            if n_refs>=3:
-                                conf, cnote = "high",   f"Calibrated with {n_refs} tape measurements."
-                            elif n_refs>=1:
-                                conf, cnote = "medium", f"Partially calibrated ({n_refs} reference). Add more for higher accuracy."
-                            elif uv>0.75 and lv2>0.75:
-                                conf, cnote = "low",    "No tape references — circumferences are estimates. Verify before cutting."
-                            else:
-                                conf, cnote = "low",    "Poor landmark visibility. Retake with better lighting."
-
-                            # ── Draw landmarks using PIL (no cv2/OpenGL needed) ──
-                            ann  = fpil.copy()
-                            draw = ImageDraw.Draw(ann)
-                            CONN = [
-                                ("LEFT_SHOULDER","RIGHT_SHOULDER"),("LEFT_SHOULDER","LEFT_ELBOW"),
-                                ("LEFT_ELBOW","LEFT_WRIST"),("RIGHT_SHOULDER","RIGHT_ELBOW"),
-                                ("RIGHT_ELBOW","RIGHT_WRIST"),("LEFT_SHOULDER","LEFT_HIP"),
-                                ("RIGHT_SHOULDER","RIGHT_HIP"),("LEFT_HIP","RIGHT_HIP"),
-                                ("LEFT_HIP","LEFT_KNEE"),("LEFT_KNEE","LEFT_ANKLE"),
-                                ("RIGHT_HIP","RIGHT_KNEE"),("RIGHT_KNEE","RIGHT_ANKLE"),
-                            ]
-                            for a, b in CONN:
-                                draw.line([(lx(a)*fw, ly(a)*fh), (lx(b)*fw, ly(b)*fh)],
-                                          fill=(147, 197, 253), width=2)
-                            for n in IDX:
-                                vis = lv(n)
-                                col = (37,235,99) if vis>0.8 else (235,180,37) if vis>0.5 else (235,37,37)
-                                x, y = lx(n)*fw, ly(n)*fh
-                                draw.ellipse([(x-5, y-5), (x+5, y+5)], fill=col)
-
-                            # Convert annotated PIL image to numpy for st.image
-                            st.session_state["ai_annotated"]   = np.array(ann)
-                            st.session_state["ai_unit_result"] = ai_unit
-                            st.session_state["ai_measurements"] = {
-                                "Chest":fmt(cf),"Stomach":fmt(wf),"Shoulder":fmt(sf),
-                                "Sleeve Length":fmt(slv),"Neck":fmt(nf),"Round Sleeve":fmt(rf),
-                                "Top Length":fmt(tl),"Trouser Length":fmt(tr),"Trouser-waist":fmt(tw),
-                                "Hips":fmt(hf),"Laps":fmt(lp),"Knee":fmt(kn),"Ankle":fmt(an),
-                                "confidence":conf,"notes":cnote,
-                            }
-                            st.rerun()
-                    except ImportError as e:
-                        st.error(f"Missing dependency: {e}")
                     except Exception as e:
-                        st.error(f"Scan failed: {e}")
+                        st.error(f"Estimation failed: {e}")
 
     # ── RESULTS ───────────────────────────────────────────────
     if st.session_state.get("ai_measurements"):

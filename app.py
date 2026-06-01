@@ -587,7 +587,7 @@ if page == "📐 AI Body Scan":
             st.session_state["ai_front_bytes"] = front_photo.read()
             st.session_state["ai_front_type"]  = front_photo.type
         if st.session_state.get("ai_front_bytes"):
-            st.image(io.BytesIO(st.session_state["ai_front_bytes"]), caption="Front View", use_container_width=True)
+            st.image(io.BytesIO(st.session_state["ai_front_bytes"]), caption="Front View", width='stretch')
         else:
             st.markdown(f"""<div style='background:{CARD};border:2px dashed #1E3A6E;border-radius:12px;
                 padding:40px;text-align:center;color:{MUTED};'>
@@ -601,7 +601,7 @@ if page == "📐 AI Body Scan":
             st.session_state["ai_back_bytes"] = back_photo.read()
             st.session_state["ai_back_type"]  = back_photo.type
         if st.session_state.get("ai_back_bytes"):
-            st.image(io.BytesIO(st.session_state["ai_back_bytes"]), caption="Back View", use_container_width=True)
+            st.image(io.BytesIO(st.session_state["ai_back_bytes"]), caption="Back View", width='stretch')
         else:
             st.markdown(f"""<div style='background:{CARD};border:2px dashed #1E3A6E;border-radius:12px;
                 padding:40px;text-align:center;color:{MUTED};'>
@@ -799,7 +799,7 @@ if page == "📐 AI Body Scan":
         if st.session_state.get("ai_annotated") is not None:
             rc1, rc2 = st.columns([1, 1])
             with rc1:
-                st.image(st.session_state["ai_annotated"], caption="Detected landmarks", use_container_width=True)
+                st.image(st.session_state["ai_annotated"], caption="Detected landmarks", width='stretch')
             with rc2:
                 st.markdown(f"<h4>Upper Body</h4>", unsafe_allow_html=True)
                 for f in UPPER_BODY:
@@ -887,7 +887,7 @@ elif page == "📋 New Measurement":
                                key="outfit_select", label_visibility="collapsed")
         img_path = OUTFIT_IMAGES.get(outfit)
         if img_path and os.path.exists(img_path):
-            st.image(img_path, caption=f"{outfit} Style", use_container_width=True)
+            st.image(img_path, caption=f"{outfit} Style", width='stretch')
 
         st.markdown("---")
 
@@ -928,7 +928,7 @@ elif page == "📋 New Measurement":
             design_photo = st.file_uploader("Upload design photo", type=["png","jpg","jpeg"],
                                              label_visibility="collapsed", key="design_photo")
             if design_photo:
-                st.image(design_photo, caption="Design Preview", use_container_width=True)
+                st.image(design_photo, caption="Design Preview", width='stretch')
             submitted = st.form_submit_button("💾 Save Measurement", use_container_width=True)
 
     with col2:

@@ -89,6 +89,7 @@ TABLE = "customers"
 FIELDS = [
     "Order ID", "Name", "Phone", "Email", "Outfit Type", "Unit",
     "Date Created", "Expected Delivery Date", "Amount Paid",
+    "Order Status",
     "Receipt File", "Design Photo", "Customer Notes",
     "Chest", "Stomach", "Shoulder", "Sleeve Length",
     "Neck", "Round Sleeve", "Top Length",
@@ -96,6 +97,8 @@ FIELDS = [
 ]
 UPPER_BODY = ["Chest", "Stomach", "Shoulder", "Sleeve Length", "Neck", "Round Sleeve", "Top Length"]
 LOWER_BODY = ["Trouser Length", "Trouser-waist", "Hips", "Laps", "Knee", "Ankle"]
+ORDER_STATUSES = ["Pending", "In Progress", "Ready", "Delivered"]
+STATUS_COLORS  = {"Pending": "#F59E0B", "In Progress": "#3B82F6", "Ready": "#10B981", "Delivered": "#6B7280"}
 
 # ── DATA HELPERS ──────────────────────────────────────────────
 def _col(n): return n.lower().replace(" ", "_").replace("-", "_")
@@ -135,7 +138,11 @@ def load_data() -> pd.DataFrame:
 
 def save_data(data: dict):
     sb = get_supabase()
-    sb.table(TABLE).insert(_cast_row({_col(k): v for k, v in data.items()})).execute()
+    row = _cast_row({_col(k): v for k, v in data.items()})
+    if "order_status" not in row or not row["order_status"]:
+        row["order_status"] = "Pending"
+    sb.table(TABLE).insert(row).execute()
+    upsert_customer_profile(data)
     st.cache_data.clear()
 
 def update_record(order_id: str, data: dict):
@@ -152,6 +159,113 @@ def validate_email(e): return bool(re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', e)) i
 
 def generate_order_id():
     return f"NEC-{datetime.now().year}-{uuid.uuid4().hex[:4].upper()}"
+
+# ── TERMII WHATSAPP ───────────────────────────────────────────
+def send_whatsapp(phone: str, message: str) -> tuple[bool, str]:
+    """Send a WhatsApp message via Termii API."""
+    api_key = _secret("TERMII_API_KEY")
+    if not api_key:
+        return False, "TERMII_API_KEY not configured."
+    # Normalise phone: strip spaces/dashes, ensure it starts with country code
+    clean = re.sub(r"[\s\-\(\)]", "", phone)
+    if clean.startswith("0"):
+        clean = "234" + clean[1:]   # Nigerian numbers: 0801... → 234801...
+    elif clean.startswith("+"):
+        clean = clean[1:]
+    try:
+        import urllib.request as _ur, json as _json
+        payload = _json.dumps({
+            "api_key":  api_key,
+            "to":       clean,
+            "from":     "N-Alert",
+            "sms":      message,
+            "type":     "plain",
+            "channel":  "whatsapp",
+        }).encode()
+        req = _ur.Request(
+            "https://api.ng.termii.com/api/sms/send",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with _ur.urlopen(req, timeout=10) as resp:
+            result = _json.loads(resp.read())
+        if result.get("code") == "ok" or result.get("message_id"):
+            return True, f"WhatsApp sent to {phone}"
+        return False, result.get("message", "Unknown Termii error")
+    except Exception as e:
+        return False, f"WhatsApp error: {e}"
+
+def whatsapp_order_created(record: dict):
+    phone = record.get("Phone", "")
+    name  = record.get("Name", "Customer")
+    oid   = record.get("Order ID", "")
+    outfit= record.get("Outfit Type", "")
+    msg   = (f"Hello {name}! 👋\n\n"
+             f"Your order has been received at *NE Clothiers*.\n\n"
+             f"📋 Order ID: *{oid}*\n"
+             f"👔 Outfit: {outfit}\n\n"
+             f"We'll notify you when your order is ready. "
+             f"Track your order anytime using your Order ID.\n\n"
+             f"_NE Clothiers — We tailor for the leading man._")
+    return send_whatsapp(phone, msg)
+
+def whatsapp_status_update(record: dict, new_status: str):
+    phone = record.get("Phone", "")
+    name  = record.get("Name", "Customer")
+    oid   = record.get("Order ID", "")
+    status_msgs = {
+        "In Progress": f"Hello {name}! ✂️\n\nGreat news — your order *{oid}* is now *In Progress*. Our tailor has started working on your {record.get('Outfit Type','')}.\n\n_NE Clothiers_",
+        "Ready":       f"Hello {name}! 🎉\n\nYour order *{oid}* is *Ready for pickup*! Your {record.get('Outfit Type','')} is looking sharp.\n\nPlease come in at your earliest convenience.\n\n_NE Clothiers_",
+        "Delivered":   f"Hello {name}! ✅\n\nYour order *{oid}* has been marked as *Delivered*. Thank you for choosing NE Clothiers!\n\nWe look forward to serving you again. 🙏\n\n_NE Clothiers_",
+    }
+    msg = status_msgs.get(new_status)
+    if not msg:
+        return False, "No message for this status."
+    return send_whatsapp(phone, msg)
+
+# ── CUSTOMER PROFILES ─────────────────────────────────────────
+CUSTOMER_TABLE = "customer_profiles"
+
+@st.cache_data(ttl=60)
+def load_customer_profiles() -> pd.DataFrame:
+    """Fetch all customer profiles (name, phone, email + last measurements)."""
+    try:
+        sb   = get_supabase()
+        rows = sb.table(CUSTOMER_TABLE).select("*").order("updated_at", desc=True).execute().data
+        if not rows:
+            return pd.DataFrame(columns=["phone", "name", "email"] + [_col(f) for f in UPPER_BODY + LOWER_BODY])
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+def upsert_customer_profile(data: dict):
+    """Create or update a customer profile keyed on phone number."""
+    sb = get_supabase()
+    profile = {
+        "phone":      data.get("Phone", "").strip(),
+        "name":       data.get("Name", "").strip(),
+        "email":      data.get("Email", "").strip(),
+        "updated_at": datetime.now().isoformat(),
+    }
+    for f in UPPER_BODY + LOWER_BODY:
+        val = data.get(f)
+        try:    profile[_col(f)] = float(val) if val not in ("", None) else None
+        except: profile[_col(f)] = None
+    try:
+        sb.table(CUSTOMER_TABLE).upsert(profile, on_conflict="phone").execute()
+        st.cache_data.clear()
+    except Exception:
+        pass  # profile upsert is best-effort — don't block order saving
+
+def get_customer_by_phone(phone: str) -> dict | None:
+    """Look up a customer profile by phone number."""
+    try:
+        sb   = get_supabase()
+        rows = sb.table(CUSTOMER_TABLE).select("*").eq("phone", phone.strip()).execute().data
+        return rows[0] if rows else None
+    except Exception:
+        return None
 
 def generate_pdf_receipt(record: dict) -> bytes:
     from fpdf import FPDF
@@ -284,6 +398,28 @@ NE Clothiers Team"""
     except Exception as e:
         return False, f"Unexpected error: {e}"
 
+def render_status_tracker(current_status: str):
+    """Render a visual step-by-step order status tracker."""
+    steps  = ORDER_STATUSES
+    icons  = ["🕐", "✂️", "✅", "📦"]
+    cur_i  = steps.index(current_status) if current_status in steps else 0
+    parts  = []
+    for i, (step, icon) in enumerate(zip(steps, icons)):
+        if i < cur_i:
+            dot = f"<div class='progress-dot-active'>{icon}</div>"
+            lbl = f"<div style='color:#10B981;'>{step}</div>"
+        elif i == cur_i:
+            dot = f"<div class='progress-dot-current'>{icon}</div>"
+            lbl = f"<div style='color:white;'>{step}</div>"
+        else:
+            dot = f"<div class='progress-dot-inactive'>{icon}</div>"
+            lbl = f"<div style='color:#64748B;'>{step}</div>"
+        parts.append(f"<div class='progress-step'>{dot}{lbl}</div>")
+        if i < len(steps) - 1:
+            line_cls = "progress-line-active" if i < cur_i else "progress-line-inactive"
+            parts.append(f"<div class='{line_cls}'></div>")
+    st.markdown(f"<div class='progress-track'>{''.join(parts)}</div>", unsafe_allow_html=True)
+
 # ── SESSION STATE ─────────────────────────────────────────────
 for _k, _v in {
     "logged_in": False, "pending_order_id": None,
@@ -291,7 +427,7 @@ for _k, _v in {
     "show_ai_prompt": False, "ai_prompt_pending": False,
     "ai_front_bytes": None, "ai_back_bytes": None,
     "ai_front_type": "image/jpeg", "ai_back_type": "image/jpeg",
-    "prefill_meas": {},
+    "prefill_meas": {}, "prefill_name": "", "prefill_email": "", "prefill_phone": "",
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -301,161 +437,70 @@ st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
+/* Hide Streamlit branding */
+#MainMenu {{ visibility: hidden; }}
+footer {{ visibility: hidden; }}
+[data-testid="stToolbar"] {{ display: none; }}
+[data-testid="stDecoration"] {{ display: none; }}
+
+/* Scrollbar */
+::-webkit-scrollbar {{ width: 6px; }}
+::-webkit-scrollbar-track {{ background: #0D1F3C; }}
+::-webkit-scrollbar-thumb {{ background: #2563EB55; border-radius: 3px; }}
+::-webkit-scrollbar-thumb:hover {{ background: #2563EB; }}
+
+/* Status badges */
+.status-pending    {{ background: #F59E0B22; border: 1px solid #F59E0B55; color: #F59E0B; border-radius: 20px; padding: 3px 12px; font-size: 0.8rem; font-weight: 600; display: inline-block; }}
+.status-inprogress {{ background: #3B82F622; border: 1px solid #3B82F655; color: #3B82F6; border-radius: 20px; padding: 3px 12px; font-size: 0.8rem; font-weight: 600; display: inline-block; }}
+.status-ready      {{ background: #10B98122; border: 1px solid #10B98155; color: #10B981; border-radius: 20px; padding: 3px 12px; font-size: 0.8rem; font-weight: 600; display: inline-block; }}
+.status-delivered  {{ background: #6B728022; border: 1px solid #6B728055; color: #9CA3AF; border-radius: 20px; padding: 3px 12px; font-size: 0.8rem; font-weight: 600; display: inline-block; }}
+
+/* Progress tracker */
+.progress-track {{ display: flex; align-items: center; gap: 0; margin: 16px 0; }}
+.progress-step  {{ flex: 1; text-align: center; font-size: 0.72rem; font-weight: 600; }}
+.progress-dot-active   {{ width: 28px; height: 28px; border-radius: 50%; background: #10B981; color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 4px auto; font-size: 0.75rem; }}
+.progress-dot-current  {{ width: 28px; height: 28px; border-radius: 50%; background: #2563EB; color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 4px auto; font-size: 0.75rem; box-shadow: 0 0 0 4px #2563EB33; }}
+.progress-dot-inactive {{ width: 28px; height: 28px; border-radius: 50%; background: #1E3A6E; color: #64748B; display: flex; align-items: center; justify-content: center; margin: 0 auto 4px auto; font-size: 0.75rem; }}
+.progress-line-active   {{ flex: 1; height: 2px; background: #10B981; }}
+.progress-line-inactive {{ flex: 1; height: 2px; background: #1E3A6E; }}
+
 html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
-
 .stApp {{ background-color: {BG}; }}
-
-/* Sidebar */
 [data-testid="stSidebar"] {{ background: {SURFACE} !important; border-right: 1px solid #1E3A6E; }}
 [data-testid="stSidebar"] * {{ color: {TEXT} !important; }}
-
-/* Main container */
 .block-container {{ padding: 1.5rem 2rem 2rem 2rem; max-width: 1200px; }}
-
-/* Typography */
 h1 {{ color: white !important; text-align: center; font-weight: 700; letter-spacing: -0.5px; }}
 h2, h3 {{ color: white !important; font-weight: 600; }}
 h4 {{ color: {ACCENT} !important; font-weight: 600; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.5px; }}
 p, label, .stMarkdown {{ color: {TEXT}; }}
-
-/* Cards */
-.ne-card {{
-    background: {CARD};
-    border: 1px solid #1E3A6E;
-    border-radius: 16px;
-    padding: 24px;
-    margin-bottom: 16px;
-}}
-.ne-card-accent {{
-    background: linear-gradient(135deg, {CARD} 0%, #0D2247 100%);
-    border: 1px solid {PRIMARY}44;
-    border-radius: 16px;
-    padding: 28px;
-    margin-bottom: 16px;
-}}
-
-/* Metric cards */
-.metric-card {{
-    background: {CARD};
-    border: 1px solid #1E3A6E;
-    border-radius: 12px;
-    padding: 20px;
-    text-align: center;
-}}
+.ne-card {{ background: {CARD}; border: 1px solid #1E3A6E; border-radius: 16px; padding: 24px; margin-bottom: 16px; }}
+.ne-card-accent {{ background: linear-gradient(135deg, {CARD} 0%, #0D2247 100%); border: 1px solid {PRIMARY}44; border-radius: 16px; padding: 28px; margin-bottom: 16px; }}
+.metric-card {{ background: {CARD}; border: 1px solid #1E3A6E; border-radius: 12px; padding: 20px; text-align: center; }}
 .metric-value {{ font-size: 2rem; font-weight: 700; color: white; margin: 0; }}
 .metric-label {{ font-size: 0.8rem; color: {MUTED}; text-transform: uppercase; letter-spacing: 1px; margin: 4px 0 0 0; }}
-
-/* Measurement display row */
-.meas-row {{
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 14px;
-    background: {CARD2};
-    border-radius: 8px;
-    margin-bottom: 5px;
-    border-left: 3px solid {PRIMARY}66;
-}}
+.meas-row {{ display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; background: {CARD2}; border-radius: 8px; margin-bottom: 5px; border-left: 3px solid {PRIMARY}66; }}
 .meas-label {{ color: {ACCENT}; font-size: 0.88rem; }}
 .meas-value {{ color: white; font-weight: 600; font-size: 0.95rem; }}
-
-/* Order card */
-.order-card {{
-    background: {CARD};
-    border-radius: 14px;
-    padding: 22px 26px;
-    margin-bottom: 16px;
-    border-left: 4px solid {PRIMARY};
-}}
-
-/* Step indicator */
-.step-badge {{
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: {PRIMARY}22;
-    border: 1px solid {PRIMARY}55;
-    border-radius: 20px;
-    padding: 4px 14px;
-    font-size: 0.8rem;
-    color: {ACCENT};
-    font-weight: 500;
-    margin-bottom: 12px;
-}}
-
-/* Confidence badge */
-.conf-high  {{ background: {GREEN}22; border: 1px solid {GREEN}55; color: {GREEN}; border-radius: 20px; padding: 3px 12px; font-size: 0.8rem; font-weight: 600; }}
-.conf-med   {{ background: {GOLD}22;  border: 1px solid {GOLD}55;  color: {GOLD};  border-radius: 20px; padding: 3px 12px; font-size: 0.8rem; font-weight: 600; }}
-.conf-low   {{ background: {RED}22;   border: 1px solid {RED}55;   color: {RED};   border-radius: 20px; padding: 3px 12px; font-size: 0.8rem; font-weight: 600; }}
-
-/* Forms */
-[data-testid="stForm"] {{
-    background: {CARD};
-    border: 1px solid #1E3A6E;
-    border-radius: 16px;
-    padding: 20px 24px;
-}}
-
-/* Buttons */
-.stButton > button {{
-    background: linear-gradient(135deg, {PRIMARY} 0%, {PRIMARY_D} 100%);
-    color: white;
-    border-radius: 10px;
-    font-weight: 600;
-    height: 44px;
-    border: none;
-    letter-spacing: 0.3px;
-    transition: all 0.2s;
-}}
-.stButton > button:hover {{
-    background: linear-gradient(135deg, {PRIMARY_D} 0%, #1E40AF 100%);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px {PRIMARY}44;
-}}
-.stDownloadButton > button {{
-    background: linear-gradient(135deg, #059669 0%, #047857 100%);
-    color: white; border-radius: 10px; font-weight: 600; border: none;
-}}
-
-/* Inputs */
-.stTextInput input, .stNumberInput input, .stTextArea textarea, .stSelectbox select {{
-    background: {SURFACE} !important;
-    border: 1px solid #1E3A6E !important;
-    border-radius: 8px !important;
-    color: white !important;
-}}
-.stTextInput input:focus, .stNumberInput input:focus {{
-    border-color: {PRIMARY} !important;
-    box-shadow: 0 0 0 2px {PRIMARY}33 !important;
-}}
-
-/* Expander */
-[data-testid="stExpander"] {{
-    background: {CARD};
-    border: 1px solid #1E3A6E;
-    border-radius: 12px;
-}}
+.order-card {{ background: {CARD}; border-radius: 14px; padding: 22px 26px; margin-bottom: 16px; border-left: 4px solid {PRIMARY}; }}
+.step-badge {{ display: inline-flex; align-items: center; gap: 8px; background: {PRIMARY}22; border: 1px solid {PRIMARY}55; border-radius: 20px; padding: 4px 14px; font-size: 0.8rem; color: {ACCENT}; font-weight: 500; margin-bottom: 12px; }}
+.conf-high {{ background: {GREEN}22; border: 1px solid {GREEN}55; color: {GREEN}; border-radius: 20px; padding: 3px 12px; font-size: 0.8rem; font-weight: 600; }}
+.conf-med  {{ background: {GOLD}22;  border: 1px solid {GOLD}55;  color: {GOLD};  border-radius: 20px; padding: 3px 12px; font-size: 0.8rem; font-weight: 600; }}
+.conf-low  {{ background: {RED}22;   border: 1px solid {RED}55;   color: {RED};   border-radius: 20px; padding: 3px 12px; font-size: 0.8rem; font-weight: 600; }}
+[data-testid="stForm"] {{ background: {CARD}; border: 1px solid #1E3A6E; border-radius: 16px; padding: 20px 24px; }}
+.stButton > button {{ background: linear-gradient(135deg, {PRIMARY} 0%, {PRIMARY_D} 100%); color: white; border-radius: 10px; font-weight: 600; height: 44px; border: none; letter-spacing: 0.3px; transition: all 0.2s; }}
+.stButton > button:hover {{ background: linear-gradient(135deg, {PRIMARY_D} 0%, #1E40AF 100%); transform: translateY(-1px); box-shadow: 0 4px 12px {PRIMARY}44; }}
+.stDownloadButton > button {{ background: linear-gradient(135deg, #059669 0%, #047857 100%); color: white; border-radius: 10px; font-weight: 600; border: none; }}
+.stTextInput input, .stNumberInput input, .stTextArea textarea {{ background: {SURFACE} !important; border: 1px solid #1E3A6E !important; border-radius: 8px !important; color: white !important; }}
+.stTextInput input:focus, .stNumberInput input:focus {{ border-color: {PRIMARY} !important; box-shadow: 0 0 0 2px {PRIMARY}33 !important; }}
+[data-testid="stExpander"] {{ background: {CARD}; border: 1px solid #1E3A6E; border-radius: 12px; }}
 [data-testid="stExpander"] summary {{ color: {ACCENT} !important; font-weight: 600; }}
-
-/* Divider */
 hr {{ border-color: #1E3A6E !important; margin: 1.5rem 0; }}
-
-/* Dataframe */
 [data-testid="stDataFrame"] {{ border-radius: 12px; overflow: hidden; }}
-
-/* Radio */
 .stRadio label {{ color: {TEXT} !important; }}
-
-/* Success / warning / error */
 .stSuccess {{ background: {GREEN}15 !important; border: 1px solid {GREEN}44 !important; border-radius: 10px !important; }}
 .stWarning {{ background: {GOLD}15  !important; border: 1px solid {GOLD}44  !important; border-radius: 10px !important; }}
 .stError   {{ background: {RED}15   !important; border: 1px solid {RED}44   !important; border-radius: 10px !important; }}
-
-/* Sidebar nav */
-.stRadio [data-testid="stMarkdownContainer"] p {{
-    font-size: 0.95rem !important;
-    padding: 4px 0 !important;
-}}
+.stRadio [data-testid="stMarkdownContainer"] p {{ font-size: 0.95rem !important; padding: 4px 0 !important; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -845,11 +890,37 @@ elif page == "📋 New Measurement":
             st.image(img_path, caption=f"{outfit} Style", use_container_width=True)
 
         st.markdown("---")
+
+        # ── Returning customer lookup ──────────────────────────
+        st.markdown(f"<h4>🔎 Returning Customer?</h4>", unsafe_allow_html=True)
+        lookup_phone = st.text_input("Enter phone to load previous measurements",
+                                      placeholder="e.g. 08012345678", key="lookup_phone")
+        if st.button("Load Customer", use_container_width=True, key="load_customer_btn"):
+            if lookup_phone.strip():
+                profile = get_customer_by_phone(lookup_phone.strip())
+                if profile:
+                    loaded = {f: profile.get(_col(f), "") for f in UPPER_BODY + LOWER_BODY}
+                    loaded = {k: str(v) if v not in (None, "") else "" for k, v in loaded.items()}
+                    st.session_state["prefill_meas"]  = loaded
+                    st.session_state["prefill_name"]  = profile.get("name", "")
+                    st.session_state["prefill_email"] = profile.get("email", "")
+                    st.session_state["prefill_phone"] = profile.get("phone", "")
+                    st.success(f"Loaded profile for {profile.get('name','customer')}. Measurements pre-filled below.")
+                    st.rerun()
+                else:
+                    st.info("No profile found for this number. Fill in the form as a new customer.")
+
+        st.markdown("---")
         with st.form("measurement_form", clear_on_submit=True):
             st.markdown(f"<h4>👤 Customer Info</h4>", unsafe_allow_html=True)
-            name  = st.text_input("Customer Name *")
-            phone = st.text_input("Phone Number *")
-            email = st.text_input("Email Address *", placeholder="customer@example.com")
+            name  = st.text_input("Customer Name *",
+                                   value=st.session_state.get("prefill_name", ""))
+            phone = st.text_input("Phone Number *",
+                                   value=st.session_state.get("prefill_phone", ""),
+                                   help="Enter phone to auto-fill returning customer details")
+            email = st.text_input("Email Address *",
+                                   value=st.session_state.get("prefill_email", ""),
+                                   placeholder="customer@example.com")
             unit  = st.radio("Measurement Unit", ["cm", "inches"], horizontal=True,
                               index=0 if prefill_unit == "cm" else 1)
             st.markdown("---")
@@ -913,13 +984,17 @@ elif page == "📋 New Measurement":
                 "Email": email.strip(), "Outfit Type": outfit_saved, "Unit": unit,
                 "Date Created": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "Expected Delivery Date": "", "Amount Paid": 0,
+                "Order Status": "Pending",
                 "Receipt File": "", "Design Photo": design_filename, "Customer Notes": "",
                 **meas_values
             }
             save_data(data)
             st.session_state.pending_order_id = order_id
             st.session_state.just_saved_order = True
-            st.session_state["prefill_meas"]  = {}  # clear prefill after save
+            st.session_state["prefill_meas"]  = {}
+            st.session_state["prefill_name"]  = ""
+            st.session_state["prefill_email"] = ""
+            st.session_state["prefill_phone"] = ""
 
             st.markdown(f"""
             <div style='background:{GREEN}15;border:1px solid {GREEN}44;border-radius:12px;padding:16px 20px;'>
@@ -930,6 +1005,10 @@ elif page == "📋 New Measurement":
             ok, msg = send_order_confirmation_email(data)
             if ok:   st.success(f"📧 {msg}")
             else:    st.warning(f"📧 Email not sent: {msg}")
+
+            wa_ok, wa_msg = whatsapp_order_created(data)
+            if wa_ok:  st.success(f"💬 {wa_msg}")
+            else:      st.caption(f"WhatsApp: {wa_msg}")
 
 # ── POST-SUBMIT BANNER ────────────────────────────────────────
 if st.session_state.just_saved_order:
@@ -983,9 +1062,11 @@ elif page == "🔍 Order Tracking":
             found_order_id = str(results.iloc[0].get("Order ID", ""))
 
             for _, row in results.iterrows():
-                oid   = row.get("Order ID", "—")
-                ddate = row.get("Expected Delivery Date", "—") or "—"
-                amt   = float(row.get("Amount Paid") or 0)
+                oid    = row.get("Order ID", "-")
+                ddate  = row.get("Expected Delivery Date", "-") or "-"
+                amt    = float(row.get("Amount Paid") or 0)
+                status = row.get("Order Status", "Pending") or "Pending"
+                sc     = STATUS_COLORS.get(status, GOLD)
                 st.markdown(f"""
                 <div class='order-card'>
                     <div style='display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;'>
@@ -994,8 +1075,11 @@ elif page == "🔍 Order Tracking":
                             <p style='color:white;margin:2px 0 6px 0;font-size:1.3rem;font-weight:700;letter-spacing:2px;'>{oid}</p>
                             <p style='color:white;margin:0 0 4px 0;font-size:1rem;font-weight:600;'>{row.get("Name","")}</p>
                             <p style='color:{ACCENT};margin:0;font-size:0.82rem;'>
-                                📱 {row.get("Phone","—")} &nbsp;·&nbsp; 👔 {row.get("Outfit Type","—")} &nbsp;·&nbsp; 🗓️ {row.get("Date Created","—")}
+                                📱 {row.get("Phone","-")} &nbsp;·&nbsp; 👔 {row.get("Outfit Type","-")} &nbsp;·&nbsp; 🗓️ {row.get("Date Created","-")}
                             </p>
+                        </div>
+                        <div style='background:{sc}22;border:1px solid {sc}55;color:{sc};border-radius:20px;padding:4px 14px;font-size:0.82rem;font-weight:600;height:fit-content;'>
+                            {status}
                         </div>
                     </div>
                     <hr style='border-color:#1E3A6E;margin:14px 0;'>
@@ -1010,10 +1094,11 @@ elif page == "🔍 Order Tracking":
                         </div>
                         <div>
                             <p style='color:{MUTED};margin:0;font-size:0.7rem;letter-spacing:1px;text-transform:uppercase;'>Notes</p>
-                            <p style='color:white;margin:3px 0 0 0;font-size:0.88rem;'>{row.get("Customer Notes","—") or "—"}</p>
+                            <p style='color:white;margin:3px 0 0 0;font-size:0.88rem;'>{row.get("Customer Notes","-") or "-"}</p>
                         </div>
                     </div>
                 </div>""", unsafe_allow_html=True)
+                render_status_tracker(status)
 
     st.markdown("---")
     st.markdown("### 📝 Submit Order Details")
@@ -1198,12 +1283,22 @@ elif page == "🔐 Admin":
                                                  index=safe_idx(outfit_list, sel_row.get("Outfit Type","")))
                         e_amount = st.number_input("Amount Paid (₦)", value=float(sel_row.get("Amount Paid") or 0),
                                                     min_value=0.0, step=1000.0)
+                        cur_status = str(sel_row.get("Order Status","Pending") or "Pending")
+                        e_status = st.selectbox("Order Status", ORDER_STATUSES,
+                                                 index=safe_idx(ORDER_STATUSES, cur_status))
                         e_notes  = st.text_area("Notes", value=str(sel_row.get("Customer Notes","")))
                         if st.form_submit_button("💾 Save Changes"):
+                            prev_status = cur_status
                             update_record(str(sel_row.get("Order ID","")),
                                           {"Name":e_name,"Phone":e_phone,"Outfit Type":e_outfit,
-                                           "Amount Paid":e_amount,"Customer Notes":e_notes})
+                                           "Amount Paid":e_amount,"Customer Notes":e_notes,
+                                           "Order Status":e_status})
                             st.success("Record updated.")
+                            # Send WhatsApp if status changed
+                            if e_status != prev_status and e_status in ("In Progress","Ready","Delivered"):
+                                wa_ok, wa_msg = whatsapp_status_update(sel_row.to_dict(), e_status)
+                                if wa_ok: st.success(f"💬 WhatsApp sent: {e_status}")
+                                else:     st.caption(f"WhatsApp: {wa_msg}")
                             st.rerun()
             with ec2:
                 with st.expander("🗑️ Delete"):

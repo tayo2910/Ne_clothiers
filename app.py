@@ -674,8 +674,8 @@ if page == "📐 AI Body Scan":
                 with st.spinner("🤖 Detecting body landmarks…"):
                     try:
                         import urllib.request, numpy as np
-                        from PIL import Image as PILImage
-                        import mediapipe as mp, cv2
+                        from PIL import Image as PILImage, ImageDraw
+                        import mediapipe as mp
                         from mediapipe.tasks import python as mp_python
                         from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
 
@@ -701,13 +701,16 @@ if page == "📐 AI Body Scan":
 
                         def _pose(img_bytes):
                             pil = PILImage.open(io.BytesIO(img_bytes)).convert("RGB")
-                            arr = np.array(pil)
+                            arr = np.array(pil, dtype=np.uint8)
+                            # Use mp.Image with numpy array — no OpenGL needed
                             mpi = mp.Image(image_format=mp.ImageFormat.SRGB, data=arr)
                             with PoseLandmarker.create_from_options(opts) as lmk:
                                 res = lmk.detect(mpi)
-                            return res, arr, pil.size
+                            return res, pil   # return PIL image, not numpy array
 
-                        fr, fnp, (fw, fh) = _pose(st.session_state["ai_front_bytes"])
+                        fr, fpil = _pose(st.session_state["ai_front_bytes"])
+                        fw, fh   = fpil.size
+
                         if not fr.pose_landmarks:
                             st.error("No person detected. Ensure full body is visible against a plain background.")
                         else:
@@ -719,8 +722,8 @@ if page == "📐 AI Body Scan":
                             def V(a,b): return abs(ly(a)-ly(b))*fh
                             def E(a,b): return ((lx(a)-lx(b))**2*fw**2+(ly(a)-ly(b))**2*fh**2)**0.5
 
-                            uv = min(lv("LEFT_SHOULDER"),lv("RIGHT_SHOULDER"),lv("LEFT_HIP"),lv("RIGHT_HIP"))
-                            lv2= min(lv("LEFT_HIP"),lv("RIGHT_HIP"),lv("LEFT_KNEE"),lv("RIGHT_KNEE"),lv("LEFT_ANKLE"),lv("RIGHT_ANKLE"))
+                            uv  = min(lv("LEFT_SHOULDER"),lv("RIGHT_SHOULDER"),lv("LEFT_HIP"),lv("RIGHT_HIP"))
+                            lv2 = min(lv("LEFT_HIP"),lv("RIGHT_HIP"),lv("LEFT_KNEE"),lv("RIGHT_KNEE"),lv("LEFT_ANKLE"),lv("RIGHT_ANKLE"))
 
                             span = abs(((ly("LEFT_ANKLE")+ly("RIGHT_ANKLE"))/2 - ly("NOSE"))*fh)/0.915
                             ppcm = span / height_cm
@@ -733,60 +736,61 @@ if page == "📐 AI Body Scan":
 
                             if st.session_state.get("ai_back_bytes"):
                                 try:
-                                    br,_,(bw,bh) = _pose(st.session_state["ai_back_bytes"])
+                                    br, bpil = _pose(st.session_state["ai_back_bytes"])
+                                    bw, bh   = bpil.size
                                     if br.pose_landmarks:
-                                        blm=br.pose_landmarks[0]
-                                        bsp=abs(((blm[IDX["LEFT_ANKLE"]].y+blm[IDX["RIGHT_ANKLE"]].y)/2-blm[IDX["NOSE"]].y)*bh)/0.915
-                                        bpc=bsp/height_cm
-                                        sw=(sw+abs(blm[IDX["LEFT_SHOULDER"]].x-blm[IDX["RIGHT_SHOULDER"]].x)*bw/bpc)/2
-                                        hw=(hw+abs(blm[IDX["LEFT_HIP"]].x-blm[IDX["RIGHT_HIP"]].x)*bw/bpc)/2
+                                        blm = br.pose_landmarks[0]
+                                        bsp = abs(((blm[IDX["LEFT_ANKLE"]].y+blm[IDX["RIGHT_ANKLE"]].y)/2-blm[IDX["NOSE"]].y)*bh)/0.915
+                                        bpc = bsp/height_cm
+                                        sw  = (sw + abs(blm[IDX["LEFT_SHOULDER"]].x-blm[IDX["RIGHT_SHOULDER"]].x)*bw/bpc)/2
+                                        hw  = (hw + abs(blm[IDX["LEFT_HIP"]].x-blm[IDX["RIGHT_HIP"]].x)*bw/bpc)/2
                                 except: pass
 
-                            # Circumference estimates — ISO 8559 / ANSUR II anthropometric ratios
-                            # These are derived from the visible 2D width × depth correction factor
-                            # Front-only: depth ≈ 0.62 × width for chest, 0.55 × width for waist
-                            # Circumference ≈ π × (width + depth) / 2  (ellipse approximation)
-                            # chest:   π × (sw + sw×0.62) = sw × π × 1.62 / 2 ≈ sw × 2.54
-                            # waist:   π × (hw×0.85 + hw×0.85×0.55) ≈ hw × 2.07
-                            # hips:    π × (hw + hw×0.65) ≈ hw × 2.59
-                            ce = sw * 2.54   # chest circumference
-                            se = hw * 2.07   # stomach/waist circumference
-                            he = hw * 2.59   # hip circumference
-                            ne = ew * 2.20   # neck circumference
-                            re = sw * 0.68   # round sleeve (bicep circumference)
-                            cf=ref_chest    if ref_chest    else ce
-                            sf=ref_shoulder if ref_shoulder else sw
-                            wf=ref_waist    if ref_waist    else se
-                            hf=ref_hip      if ref_hip      else he
-                            ck=cf/ce if ce>0 else 1; sk=sf/sw if sw>0 else 1
-                            wk=wf/se if se>0 else 1; hk=hf/he if he>0 else 1
-                            nf=ne*((ck+sk)/2); rf=re*sk
-                            slv=cm(E("LEFT_SHOULDER","LEFT_ELBOW")+E("LEFT_ELBOW","LEFT_WRIST"))
-                            tl=cm(V("LEFT_SHOULDER","LEFT_HIP"))
-                            tr=cm(V("LEFT_HIP","LEFT_ANKLE"))
-                            tw=wf*1.05   # trouser waist = stomach + 5% ease
-                            lp=hf*0.62   # laps/thigh ≈ 62% of hip circ
-                            kn=hf*0.42   # knee ≈ 42% of hip circ
-                            an=hf*0.24   # ankle ≈ 24% of hip circ
+                            # Circumference estimates — ellipse approximation from 2D widths
+                            ce = sw * 2.54; se = hw * 2.07; he = hw * 2.59
+                            ne = ew * 2.20; re = sw * 0.68
+                            cf = ref_chest    if ref_chest    else ce
+                            sf = ref_shoulder if ref_shoulder else sw
+                            wf = ref_waist    if ref_waist    else se
+                            hf = ref_hip      if ref_hip      else he
+                            ck = cf/ce if ce>0 else 1.0; sk = sf/sw if sw>0 else 1.0
+                            nf = ne*((ck+sk)/2); rf = re*sk
+                            slv = cm(E("LEFT_SHOULDER","LEFT_ELBOW")+E("LEFT_ELBOW","LEFT_WRIST"))
+                            tl  = cm(V("LEFT_SHOULDER","LEFT_HIP"))
+                            tr  = cm(V("LEFT_HIP","LEFT_ANKLE"))
+                            tw  = wf*1.05; lp = hf*0.62; kn = hf*0.42; an = hf*0.24
 
-                            if n_refs>=3:   conf,cnote="high",  f"Calibrated with {n_refs} tape measurements."
-                            elif n_refs>=1: conf,cnote="medium",f"Partially calibrated ({n_refs} reference). Add more for higher accuracy."
-                            elif uv>0.75 and lv2>0.75: conf,cnote="low","No tape references — circumferences are estimates. Verify before cutting."
-                            else:           conf,cnote="low","Poor landmark visibility. Retake with better lighting."
+                            if n_refs>=3:
+                                conf, cnote = "high",   f"Calibrated with {n_refs} tape measurements."
+                            elif n_refs>=1:
+                                conf, cnote = "medium", f"Partially calibrated ({n_refs} reference). Add more for higher accuracy."
+                            elif uv>0.75 and lv2>0.75:
+                                conf, cnote = "low",    "No tape references — circumferences are estimates. Verify before cutting."
+                            else:
+                                conf, cnote = "low",    "Poor landmark visibility. Retake with better lighting."
 
-                            ann=fnp.copy()
-                            for a,b in [("LEFT_SHOULDER","RIGHT_SHOULDER"),("LEFT_SHOULDER","LEFT_ELBOW"),
-                                        ("LEFT_ELBOW","LEFT_WRIST"),("RIGHT_SHOULDER","RIGHT_ELBOW"),
-                                        ("RIGHT_ELBOW","RIGHT_WRIST"),("LEFT_SHOULDER","LEFT_HIP"),
-                                        ("RIGHT_SHOULDER","RIGHT_HIP"),("LEFT_HIP","RIGHT_HIP"),
-                                        ("LEFT_HIP","LEFT_KNEE"),("LEFT_KNEE","LEFT_ANKLE"),
-                                        ("RIGHT_HIP","RIGHT_KNEE"),("RIGHT_KNEE","RIGHT_ANKLE")]:
-                                cv2.line(ann,(int(lx(a)*fw),int(ly(a)*fh)),(int(lx(b)*fw),int(ly(b)*fh)),(147,197,253),2)
+                            # ── Draw landmarks using PIL (no cv2/OpenGL needed) ──
+                            ann  = fpil.copy()
+                            draw = ImageDraw.Draw(ann)
+                            CONN = [
+                                ("LEFT_SHOULDER","RIGHT_SHOULDER"),("LEFT_SHOULDER","LEFT_ELBOW"),
+                                ("LEFT_ELBOW","LEFT_WRIST"),("RIGHT_SHOULDER","RIGHT_ELBOW"),
+                                ("RIGHT_ELBOW","RIGHT_WRIST"),("LEFT_SHOULDER","LEFT_HIP"),
+                                ("RIGHT_SHOULDER","RIGHT_HIP"),("LEFT_HIP","RIGHT_HIP"),
+                                ("LEFT_HIP","LEFT_KNEE"),("LEFT_KNEE","LEFT_ANKLE"),
+                                ("RIGHT_HIP","RIGHT_KNEE"),("RIGHT_KNEE","RIGHT_ANKLE"),
+                            ]
+                            for a, b in CONN:
+                                draw.line([(lx(a)*fw, ly(a)*fh), (lx(b)*fw, ly(b)*fh)],
+                                          fill=(147, 197, 253), width=2)
                             for n in IDX:
-                                vis=lv(n); col=(37,235,99) if vis>0.8 else (235,180,37) if vis>0.5 else (235,37,37)
-                                cv2.circle(ann,(int(lx(n)*fw),int(ly(n)*fh)),5,col,-1)
+                                vis = lv(n)
+                                col = (37,235,99) if vis>0.8 else (235,180,37) if vis>0.5 else (235,37,37)
+                                x, y = lx(n)*fw, ly(n)*fh
+                                draw.ellipse([(x-5, y-5), (x+5, y+5)], fill=col)
 
-                            st.session_state["ai_annotated"]   = ann
+                            # Convert annotated PIL image to numpy for st.image
+                            st.session_state["ai_annotated"]   = np.array(ann)
                             st.session_state["ai_unit_result"] = ai_unit
                             st.session_state["ai_measurements"] = {
                                 "Chest":fmt(cf),"Stomach":fmt(wf),"Shoulder":fmt(sf),

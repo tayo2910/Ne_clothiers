@@ -6,7 +6,6 @@ import os
 import io
 import re
 import uuid
-import base64
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -535,7 +534,7 @@ with st.sidebar:
     # Determine which page to show — use a separate state var, not the widget key
     if "_nav_override" in st.session_state:
         st.session_state["_nav_page"] = st.session_state.pop("_nav_override")
-    elif st.session_state.pending_order_id and "_nav_page" not in st.session_state:
+    elif st.session_state.pending_order_id:
         st.session_state["_nav_page"] = "🔍 Order Tracking"
     elif "_nav_page" not in st.session_state:
         st.session_state["_nav_page"] = "📐 AI Body Scan"
@@ -1038,8 +1037,8 @@ elif page == "📋 New Measurement":
             if wa_ok:  st.success(f"💬 {wa_msg}")
             else:      st.caption(f"WhatsApp: {wa_msg}")
 
-# ── POST-SUBMIT BANNER ────────────────────────────────────────
-if st.session_state.just_saved_order:
+# ── POST-SUBMIT BANNER (only shown on New Measurement page) ──
+if page == "📋 New Measurement" and st.session_state.just_saved_order:
     st.markdown("---")
     st.markdown(f"""
     <div class='ne-card-accent' style='text-align:center;'>
@@ -1064,6 +1063,7 @@ elif page == "🔍 Order Tracking":
         st.session_state.pending_order_id = None
 
     # Search bar
+    search_query = ""
     sc1, sc2 = st.columns([4, 1])
     with sc1:
         search_query = st.text_input("Search", value=found_order_id,

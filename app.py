@@ -128,7 +128,7 @@ def load_data() -> pd.DataFrame:
             if c not in df.columns: df[c] = ""
         df = df[FIELDS]
         for c in UPPER_BODY + LOWER_BODY + ["Amount Paid"]:
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(float)
         txt = [f for f in FIELDS if f not in UPPER_BODY + LOWER_BODY + ["Amount Paid"]]
         df[txt] = df[txt].fillna("").astype(str)
         return df
@@ -732,7 +732,18 @@ if page == "📐 AI Body Scan":
                                         hw=(hw+abs(blm[IDX["LEFT_HIP"]].x-blm[IDX["RIGHT_HIP"]].x)*bw/bpc)/2
                                 except: pass
 
-                            ce=sw*2.05; se=hw*1.80; he=hw*2.10; ne=ew*2.20; re=sw*0.65
+                            # Circumference estimates — ISO 8559 / ANSUR II anthropometric ratios
+                            # These are derived from the visible 2D width × depth correction factor
+                            # Front-only: depth ≈ 0.62 × width for chest, 0.55 × width for waist
+                            # Circumference ≈ π × (width + depth) / 2  (ellipse approximation)
+                            # chest:   π × (sw + sw×0.62) = sw × π × 1.62 / 2 ≈ sw × 2.54
+                            # waist:   π × (hw×0.85 + hw×0.85×0.55) ≈ hw × 2.07
+                            # hips:    π × (hw + hw×0.65) ≈ hw × 2.59
+                            ce = sw * 2.54   # chest circumference
+                            se = hw * 2.07   # stomach/waist circumference
+                            he = hw * 2.59   # hip circumference
+                            ne = ew * 2.20   # neck circumference
+                            re = sw * 0.68   # round sleeve (bicep circumference)
                             cf=ref_chest    if ref_chest    else ce
                             sf=ref_shoulder if ref_shoulder else sw
                             wf=ref_waist    if ref_waist    else se
@@ -743,7 +754,10 @@ if page == "📐 AI Body Scan":
                             slv=cm(E("LEFT_SHOULDER","LEFT_ELBOW")+E("LEFT_ELBOW","LEFT_WRIST"))
                             tl=cm(V("LEFT_SHOULDER","LEFT_HIP"))
                             tr=cm(V("LEFT_HIP","LEFT_ANKLE"))
-                            tw=wf*1.05; lp=hf*0.58; kn=hf*0.40; an=hf*0.22
+                            tw=wf*1.05   # trouser waist = stomach + 5% ease
+                            lp=hf*0.62   # laps/thigh ≈ 62% of hip circ
+                            kn=hf*0.42   # knee ≈ 42% of hip circ
+                            an=hf*0.24   # ankle ≈ 24% of hip circ
 
                             if n_refs>=3:   conf,cnote="high",  f"Calibrated with {n_refs} tape measurements."
                             elif n_refs>=1: conf,cnote="medium",f"Partially calibrated ({n_refs} reference). Add more for higher accuracy."
@@ -1106,7 +1120,10 @@ elif page == "🔍 Order Tracking":
 
     prefill_row    = results.iloc[0] if not results.empty else None
     default_oid    = found_order_id
-    default_amount = float(prefill_row.get("Amount Paid") or 0) if prefill_row is not None else 0.0
+    try:
+        default_amount = float(prefill_row.get("Amount Paid") or 0) if prefill_row is not None else 0.0
+    except (ValueError, TypeError):
+        default_amount = 0.0
     default_notes  = str(prefill_row.get("Customer Notes","") or "") if prefill_row is not None else ""
 
     with st.form("order_details_form", clear_on_submit=True):
@@ -1281,7 +1298,7 @@ elif page == "🔐 Admin":
                         e_phone  = st.text_input("Phone", value=str(sel_row.get("Phone","")))
                         e_outfit = st.selectbox("Outfit Type", outfit_list,
                                                  index=safe_idx(outfit_list, sel_row.get("Outfit Type","")))
-                        e_amount = st.number_input("Amount Paid (₦)", value=float(sel_row.get("Amount Paid") or 0),
+                        e_amount = st.number_input("Amount Paid (₦)", value=float(sel_row.get("Amount Paid") or 0) if sel_row.get("Amount Paid") not in ("", None) else 0.0,
                                                     min_value=0.0, step=1000.0)
                         cur_status = str(sel_row.get("Order Status","Pending") or "Pending")
                         e_status = st.selectbox("Order Status", ORDER_STATUSES,

@@ -428,6 +428,7 @@ for _k, _v in {
     "ai_front_bytes": None, "ai_back_bytes": None,
     "ai_front_type": "image/jpeg", "ai_back_type": "image/jpeg",
     "prefill_meas": {}, "prefill_name": "", "prefill_email": "", "prefill_phone": "",
+    "_nav_page": "📐 AI Body Scan",
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -531,14 +532,23 @@ with st.sidebar:
     # Nav order: AI Scan first, then New Measurement, then Tracking, then Admin
     _nav_options = ["📐 AI Body Scan", "📋 New Measurement", "🔍 Order Tracking", "🔐 Admin"]
 
+    # Determine which page to show — use a separate state var, not the widget key
     if "_nav_override" in st.session_state:
-        st.session_state["_nav_radio"] = st.session_state.pop("_nav_override")
-    elif st.session_state.pending_order_id:
-        st.session_state["_nav_radio"] = "🔍 Order Tracking"
-    elif "_nav_radio" not in st.session_state:
-        st.session_state["_nav_radio"] = "📐 AI Body Scan"
+        st.session_state["_nav_page"] = st.session_state.pop("_nav_override")
+    elif st.session_state.pending_order_id and "_nav_page" not in st.session_state:
+        st.session_state["_nav_page"] = "🔍 Order Tracking"
+    elif "_nav_page" not in st.session_state:
+        st.session_state["_nav_page"] = "📐 AI Body Scan"
 
-    page = st.radio("Navigation", _nav_options, key="_nav_radio", label_visibility="collapsed")
+    # Resolve index safely
+    _cur_page = st.session_state["_nav_page"]
+    _nav_idx  = _nav_options.index(_cur_page) if _cur_page in _nav_options else 0
+
+    page = st.radio("Navigation", _nav_options, index=_nav_idx,
+                    label_visibility="collapsed", key="_nav_radio")
+
+    # Keep _nav_page in sync with what the user clicked
+    st.session_state["_nav_page"] = page
 
     st.markdown("---")
     st.markdown(f"<p style='color:{MUTED}; font-size:0.75rem; text-align:center;'>Workflow</p>", unsafe_allow_html=True)

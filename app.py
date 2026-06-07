@@ -1220,19 +1220,24 @@ elif page == "🔐 Admin":
             today = pd.Timestamp(date.today())
             try:
                 df["_dt"] = pd.to_datetime(df["Expected Delivery Date"], errors="coerce")
-                due_week  = df[(df["_dt"] >= today) & (df["_dt"] <= today + pd.Timedelta(days=7))]
-                overdue   = df[df["_dt"] < today]
-            except:
-                due_week = overdue = pd.DataFrame()
+                due_week  = df[(df["_dt"] >= today) & (df["_dt"] <= today + pd.Timedelta(days=7)) & (df["Order Status"] != "Delivered")]
+                overdue   = df[(df["_dt"] < today) & (df["Order Status"] != "Delivered")]
+                active_orders = df[df["Order Status"] != "Delivered"]
+            except Exception as e:
+                due_week = overdue = active_orders = pd.DataFrame()
 
             total_col = pd.to_numeric(df["Amount Paid"], errors="coerce").sum()
+            avg_paid  = pd.to_numeric(df["Amount Paid"], errors="coerce").mean()
+            avg_paid  = 0.0 if pd.isna(avg_paid) else avg_paid
 
-            mc1, mc2, mc3, mc4 = st.columns(4)
+            # Metric Columns
+            mc1, mc2, mc3, mc4, mc5 = st.columns(5)
             for col, val, label in [
-                (mc1, len(df),        "Total Customers"),
-                (mc2, len(due_week),  "Due This Week"),
-                (mc3, len(overdue),   "Overdue"),
-                (mc4, f"₦{total_col:,.0f}", "Total Collected"),
+                (mc1, len(df),                    "Total Customers"),
+                (mc2, len(active_orders),         "Active Orders"),
+                (mc3, len(due_week),              "Due This Week"),
+                (mc4, f"₦{avg_paid:,.0f}",         "Avg. Order Value"),
+                (mc5, f"₦{total_col:,.0f}",        "Total Collected"),
             ]:
                 col.markdown(f"""<div class='metric-card'>
                     <p class='metric-value'>{val}</p>
@@ -1240,19 +1245,53 @@ elif page == "🔐 Admin":
                 </div>""", unsafe_allow_html=True)
 
             st.markdown("---")
-            dc1, dc2 = st.columns([1, 1])
-            with dc1:
-                st.markdown(f"<h4>Outfit Breakdown</h4>", unsafe_allow_html=True)
-                st.bar_chart(df["Outfit Type"].value_counts())
-            with dc2:
-                st.markdown(f"<h4>🕐 5 Most Recent</h4>", unsafe_allow_html=True)
-                rc = ["Order ID","Name","Phone","Outfit Type","Expected Delivery Date"]
-                st.dataframe(df.tail(5)[rc].iloc[::-1], use_container_width=True, height=220)
 
-            if not overdue.empty:
-                st.markdown("---")
-                st.markdown(f"<h4 style='color:{RED};'>🚨 Overdue Orders</h4>", unsafe_allow_html=True)
-                st.dataframe(overdue[["Order ID","Name","Phone","Outfit Type","Expected Delivery Date"]], use_container_width=True)
+            # Dashboard Tabs
+            dash_tab1, dash_tab2 = st.tabs(["📊 Analytics Overview", "📅 Deliveries & Alerts"])
+
+            with dash_tab1:
+                dc1, dc2 = st.columns([1, 1])
+                with dc1:
+                    st.markdown(f"<h4>Outfit Breakdown</h4>", unsafe_allow_html=True)
+                    st.bar_chart(df["Outfit Type"].value_counts())
+
+                    st.markdown(f"<h4 style='margin-top:20px;'>Order Status Breakdown</h4>", unsafe_allow_html=True)
+                    status_counts = df["Order Status"].value_counts().reindex(ORDER_STATUSES, fill_value=0)
+                    st.bar_chart(status_counts)
+
+                with dc2:
+                    st.markdown(f"<h4>Revenue Over Time</h4>", unsafe_allow_html=True)
+                    try:
+                        df_rev = df.copy()
+                        df_rev["_date_created"] = pd.to_datetime(df_rev["Date Created"], errors="coerce").dt.date
+                        df_rev = df_rev.dropna(subset=["_date_created"]).sort_values("_date_created")
+                        if not df_rev.empty:
+                            daily_rev = df_rev.groupby("_date_created")["Amount Paid"].sum().reset_index()
+                            daily_rev["Cumulative Revenue"] = daily_rev["Amount Paid"].cumsum()
+                            daily_rev = daily_rev.rename(columns={"_date_created": "Date", "Amount Paid": "Daily Revenue"})
+                            daily_rev = daily_rev.set_index("Date")
+                            st.line_chart(daily_rev[["Daily Revenue", "Cumulative Revenue"]])
+                        else:
+                            st.info("No revenue history available to plot.")
+                    except Exception as e:
+                        st.caption(f"Could not load revenue over time: {e}")
+
+                    st.markdown(f"<h4 style='margin-top:20px;'>🕐 5 Most Recent Orders</h4>", unsafe_allow_html=True)
+                    rc = ["Order ID","Name","Phone","Outfit Type","Expected Delivery Date"]
+                    st.dataframe(df.tail(5)[rc].iloc[::-1], use_container_width=True, height=220)
+
+            with dash_tab2:
+                # Alerts Frame
+                if overdue.empty and due_week.empty:
+                    st.success("🎉 All caught up! No overdue orders or upcoming deliveries this week.")
+                else:
+                    if not overdue.empty:
+                        st.markdown(f"<h4 style='color:{RED};'>🚨 Overdue Orders ({len(overdue)})</h4>", unsafe_allow_html=True)
+                        st.dataframe(overdue[["Order ID","Name","Phone","Outfit Type","Expected Delivery Date","Order Status"]], use_container_width=True)
+                    
+                    if not due_week.empty:
+                        st.markdown(f"<h4 style='color:{GOLD};'>📆 Deliveries Due This Week ({len(due_week)})</h4>", unsafe_allow_html=True)
+                        st.dataframe(due_week[["Order ID","Name","Phone","Outfit Type","Expected Delivery Date","Order Status"]], use_container_width=True)
 
         st.markdown("---")
         st.markdown("#### 🗂️ All Records")

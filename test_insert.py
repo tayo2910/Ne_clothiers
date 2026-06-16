@@ -21,7 +21,7 @@ try:
     dummy = {
         "order_id": "NEC-2026-TEST",
         "name": "Test Column Check",
-        "phone": "00000000000",
+        "phone": "000000000",
         "email": "test@example.com",
         "order_status": "Pending",
         "amount_paid": 0.0,

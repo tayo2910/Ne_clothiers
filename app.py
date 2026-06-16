@@ -584,7 +584,7 @@ with st.sidebar:
 if page == "📐 AI Body Scan":
     st.markdown('<div class="step-badge">Step 1 of 3 — AI Body Scan</div>', unsafe_allow_html=True)
     st.markdown("## 📐 AI Body Measurement Scan")
-    st.markdown(f"<p style='color:{MUTED}; text-align:center; margin-top:-8px;'>Provide your height and optional tape measurements. The AI estimates all body measurements using published anthropometric proportions.</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='color:{MUTED}; text-align:center; margin-top:-8px;'>Upload a full-body photo and provide your height. AI estimates all tailoring measurements using GPT-4o Vision — no tape needed.</p>", unsafe_allow_html=True)
 
     # Photo upload
     st.markdown("---")
@@ -670,136 +670,117 @@ if page == "📐 AI Body Scan":
             n_refs    = sum(x is not None for x in [ref_chest, ref_shoulder, ref_waist, ref_hip])
 
             if height_cm:
-                with st.spinner("🧠 Detecting body landmarks with MediaPipe AI…"):
-                    try:
-                        from PIL import Image as PILImage, ImageDraw
-                        import numpy as np
-                        from ai_scanner import PoseScanner
-                        import os
+                from PIL import Image as PILImage
+                import numpy as np
+                front_img = PILImage.open(io.BytesIO(st.session_state["ai_front_bytes"])).convert("RGB")
 
-                        scanner = PoseScanner(
-                            model_path=os.path.join(os.path.dirname(__file__), "pose_landmarker.task")
+                def fmt(v):
+                    return f"{v:.1f}" if ai_unit == "cm" else f"{v/2.54:.1f}"
+
+                def store(meas, ann_img, source):
+                    st.session_state["ai_annotated"]   = ann_img
+                    st.session_state["ai_unit_result"] = ai_unit
+                    st.session_state["ai_measurements"] = {
+                        "Chest":         fmt(meas.get("Chest", 0)),
+                        "Stomach":       fmt(meas.get("Stomach", 0)),
+                        "Shoulder":      fmt(meas.get("Shoulder", 0)),
+                        "Sleeve Length": fmt(meas.get("Sleeve Length", 0)),
+                        "Neck":          fmt(meas.get("Neck", 0)),
+                        "Round Sleeve":  fmt(meas.get("Round Sleeve", 0)),
+                        "Top Length":    fmt(meas.get("Top Length", 0)),
+                        "Trouser Length":fmt(meas.get("Trouser Length", 0)),
+                        "Trouser-waist": fmt(meas.get("Trouser-waist", 0)),
+                        "Hips":          fmt(meas.get("Hips", 0)),
+                        "Laps":          fmt(meas.get("Laps", 0)),
+                        "Knee":          fmt(meas.get("Knee", 0)),
+                        "Ankle":         fmt(meas.get("Ankle", 0)),
+                        "confidence":    meas.get("confidence", "low"),
+                        "notes":         meas.get("notes", f"Estimated via {source}."),
+                    }
+                    st.rerun()
+
+                # ── ATTEMPT 1: OpenAI GPT-4o Vision ─────────────
+                openai_success = False
+                try:
+                    with st.spinner("🧠 Analyzing with GPT-4o Vision AI…"):
+                        from openai_scanner import OpenAIScanner
+                        oai = OpenAIScanner()
+                        oai_result = oai.estimate_measurements(
+                            front_image=front_img, height_cm=height_cm,
+                            ref_chest=ref_chest, ref_shoulder=ref_shoulder,
+                            ref_waist=ref_waist, ref_hip=ref_hip,
                         )
-
-                        front_img = PILImage.open(io.BytesIO(st.session_state["ai_front_bytes"])).convert("RGB")
-
-                        # Try MediaPipe landmark detection first
-                        landmarks = scanner.detect(front_img)
-
-                        if landmarks is not None:
-                            # --- LANDMARK-BASED MEASUREMENT ---
-                            result = scanner.estimate_measurements(
-                                front_image=front_img,
-                                height_cm=height_cm,
-                                ref_chest=ref_chest,
-                                ref_shoulder=ref_shoulder,
-                                ref_waist=ref_waist,
-                                ref_hip=ref_hip,
-                            )
-                            if result is not None:
-                                raw = result
-                                ann_img = scanner.annotate_image(front_img, landmarks)
-
-                                def fmt(v):
-                                    return f"{v:.1f}" if ai_unit == "cm" else f"{v/2.54:.1f}"
-
-                                st.session_state["ai_annotated"]   = np.array(ann_img)
-                                st.session_state["ai_unit_result"] = ai_unit
-                                st.session_state["ai_measurements"] = {
-                                    "Chest":         fmt(raw["Chest"]),
-                                    "Stomach":       fmt(raw["Stomach"]),
-                                    "Shoulder":      fmt(raw["Shoulder"]),
-                                    "Sleeve Length": fmt(raw["Sleeve Length"]),
-                                    "Neck":          fmt(raw["Neck"]),
-                                    "Round Sleeve":  fmt(raw["Round Sleeve"]),
-                                    "Top Length":    fmt(raw["Top Length"]),
-                                    "Trouser Length":fmt(raw["Trouser Length"]),
-                                    "Trouser-waist": fmt(raw["Trouser-waist"]),
-                                    "Hips":          fmt(raw["Hips"]),
-                                    "Laps":          fmt(raw["Laps"]),
-                                    "Knee":          fmt(raw["Knee"]),
-                                    "Ankle":         fmt(raw["Ankle"]),
-                                    "confidence":    raw.get("_confidence", "medium"),
-                                    "notes":         raw.get("_notes", ""),
-                                }
-                                st.rerun()
-                            else:
-                                raise ValueError("Landmark-based estimation returned no data.")
+                        if "error" not in oai_result:
+                            oai_result["_height_cm"] = height_cm
+                            ann_img = oai.annotate_image(front_img, oai_result)
+                            store(oai_result, np.array(ann_img), "GPT-4o Vision")
+                            openai_success = True
                         else:
-                            raise ValueError("No person detected in photo.")
+                            st.warning(f"⚠️ GPT-4o analysis: {oai_result['error']}")
+                except Exception as oai_err:
+                    st.warning(f"⚠️ GPT-4o unavailable: {oai_err}")
 
-                    except ValueError as ve:
-                        # Fallback: anthropometric ratios
-                        st.warning(f"⚠️ {ve} Falling back to height-based estimation.")
-                        with st.spinner("📐 Using height-proportion estimation…"):
-                            try:
-                                H = height_cm
-
-                                shoulder_est = H * 0.259
-                                chest_est    = H * 0.536
-                                waist_est    = H * 0.445
-                                hip_est      = H * 0.543
-                                neck_est     = H * 0.196
-                                bicep_est    = H * 0.168
-                                sleeve_est   = H * 0.352
-                                top_len_est  = H * 0.300
-                                trouser_est  = H * 0.472
-
-                                cf = ref_chest    if ref_chest    else chest_est
-                                sf = ref_shoulder if ref_shoulder else shoulder_est
-                                wf = ref_waist    if ref_waist    else waist_est
-                                hf = ref_hip      if ref_hip      else hip_est
-
-                                ck = cf / chest_est    if chest_est    > 0 else 1.0
-                                sk = sf / shoulder_est if shoulder_est > 0 else 1.0
-                                hk = hf / hip_est      if hip_est      > 0 else 1.0
-
-                                nf  = neck_est  * ((ck + sk) / 2)
-                                rf  = bicep_est * sk
-                                slv = sleeve_est * sk
-                                tl  = top_len_est
-                                tr  = trouser_est
-                                tw  = wf * 1.05
-                                lp  = hf * 0.62
-                                kn  = hf * 0.42
-                                an  = hf * 0.24
-
-                                def fmt(v): return f"{v:.1f}" if ai_unit == "cm" else f"{v/2.54:.1f}"
-
-                                if n_refs >= 3:
-                                    conf  = "high"
-                                    cnote = f"Fallback: calibrated with {n_refs} tape measurements."
-                                elif n_refs >= 1:
-                                    conf  = "medium"
-                                    cnote = f"Fallback: partially calibrated ({n_refs} tape reference)."
+                # ── ATTEMPT 2: MediaPipe Pose Landmarks ──────────
+                if not openai_success:
+                    try:
+                        with st.spinner("🧍 Detecting body landmarks with MediaPipe…"):
+                            from ai_scanner import PoseScanner
+                            import os
+                            scanner = PoseScanner(
+                                model_path=os.path.join(os.path.dirname(__file__), "pose_landmarker.task")
+                            )
+                            landmarks = scanner.detect(front_img)
+                            if landmarks is not None:
+                                mp_result = scanner.estimate_measurements(
+                                    front_image=front_img, height_cm=height_cm,
+                                    ref_chest=ref_chest, ref_shoulder=ref_shoulder,
+                                    ref_waist=ref_waist, ref_hip=ref_hip,
+                                )
+                                if mp_result is not None:
+                                    ann_img = scanner.annotate_image(front_img, landmarks)
+                                    store(mp_result, np.array(ann_img), "MediaPipe Pose")
+                                    openai_success = True
                                 else:
-                                    conf  = "low"
-                                    cnote = "Fallback: estimated from height proportions only. Upload a clear full-body photo for AI scanning."
+                                    raise ValueError("Landmark estimation returned no data.")
+                            else:
+                                raise ValueError("No person detected in photo.")
+                    except Exception as mp_err:
+                        st.warning(f"⚠️ MediaPipe: {mp_err}")
 
-                                st.session_state["ai_annotated"]   = None
-                                st.session_state["ai_unit_result"] = ai_unit
-                                st.session_state["ai_measurements"] = {
-                                    "Chest":         fmt(cf),
-                                    "Stomach":       fmt(wf),
-                                    "Shoulder":      fmt(sf),
-                                    "Sleeve Length": fmt(slv),
-                                    "Neck":          fmt(nf),
-                                    "Round Sleeve":  fmt(rf),
-                                    "Top Length":    fmt(tl),
-                                    "Trouser Length":fmt(tr),
-                                    "Trouser-waist": fmt(tw),
-                                    "Hips":          fmt(hf),
-                                    "Laps":          fmt(lp),
-                                    "Knee":          fmt(kn),
-                                    "Ankle":         fmt(an),
-                                    "confidence":    conf,
-                                    "notes":         cnote,
-                                }
-                                st.rerun()
-                            except Exception as e2:
-                                st.error(f"Estimation failed: {e2}")
-                    except Exception as e:
-                        st.error(f"AI scan failed: {e}")
+                # ── ATTEMPT 3: Anthropometric ratios (fallback) ──
+                if not openai_success:
+                    st.warning("⚠️ AI vision unavailable. Using height-proportion estimation.")
+                    with st.spinner("📐 Estimating from height proportions…"):
+                        try:
+                            H = height_cm
+                            cf = ref_chest    or H * 0.536
+                            sf = ref_shoulder or H * 0.259
+                            wf = ref_waist    or H * 0.445
+                            hf = ref_hip      or H * 0.543
+                            ck = cf / (H * 0.536) if not ref_chest else 1.0
+                            sk = sf / (H * 0.259) if not ref_shoulder else 1.0
+                            hk = hf / (H * 0.543) if not ref_hip else 1.0
+
+                            fallback = {
+                                "Chest":         cf,
+                                "Stomach":       wf,
+                                "Shoulder":      sf,
+                                "Sleeve Length": H * 0.352 * sk,
+                                "Neck":          H * 0.196 * ((ck + sk) / 2),
+                                "Round Sleeve":  H * 0.168 * sk,
+                                "Top Length":    H * 0.300,
+                                "Trouser Length":H * 0.472,
+                                "Trouser-waist": wf * 1.05,
+                                "Hips":          hf,
+                                "Laps":          hf * 0.62,
+                                "Knee":          hf * 0.42,
+                                "Ankle":         hf * 0.24,
+                                "confidence":    "low" if n_refs == 0 else ("high" if n_refs >= 3 else "medium"),
+                                "notes":         f"Height-proportion fallback{' (calibrated with tape measurements)' if n_refs > 0 else ''}.",
+                            }
+                            store(fallback, None, "Height proportions")
+                        except Exception as e2:
+                            st.error(f"All estimation methods failed: {e2}")
 
     # ── RESULTS ───────────────────────────────────────────────
     if st.session_state.get("ai_measurements"):
